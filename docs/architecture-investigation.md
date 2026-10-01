@@ -372,12 +372,23 @@ Every conflict below is real, and each is caught by one field of the
 Runtime experiments, ordered so that the cheapest one that could *falsify* the
 architecture runs first. Each one names the claim it can break.
 
-- [ ] **1. Step control is engine-wide and capture-safe.** One plugin
+- [x] **1. Step control is engine-wide.** Capture safety, originally part of
+      this item, is split out as 1b. One plugin
       (`sglang.multimodal_gen.plugins`) wraps `_run_denoising_step` and skips
       the DiT on chosen steps. Run the *same* code on Qwen-Image and
       FLUX.2-klein, then on Qwen-Image with breakable CUDA graphs on.
       - Falsified if either model needs model-specific code to skip a step.
       - Falsified if graph replay misbehaves when calls are skipped.
+      - **Done** ([experiment 001](../experiments/001-step-control/README.md)):
+        the same plugin worked on both models with no model-specific code,
+        but skipping a whole step desyncs the scheduler, so step control was
+        split ([ADR 0011](adr/0011-split-step-control.md)).
+- [ ] **1b. Step capabilities are capture-safe.** Not tested by experiment
+      001: FLUX.2 is not on SGLang's graph-capture allowlist (it falls back to
+      eager with a warning), and the Qwen-Image-2.1 graph runs were not done.
+      Run `step_observe` and `step_prediction_override` on Qwen-Image-2.1
+      with breakable CUDA graphs on.
+      - Falsified if graph replay misbehaves when a prediction is overridden.
 - [ ] **2. Trunk control resolves per Binding and survives compile.**
       Implement `trunk_control` for both models with reuse disabled, and
       require OFF-identity (bit-exact against the unwrapped model) in eager
@@ -385,7 +396,7 @@ architecture runs first. Each one names the claim it can break.
       - Falsified if the wrapper cannot be identical in eager mode.
       - Falsified if compile breaks it beyond an acceptable graph-break count.
 - [ ] **3. Capabilities are not SGLang-shaped.** By code reading only, map
-      `step_control`, `trunk_control` and `request_local_state` onto
+      the step capabilities, `trunk_control` and `request_local_state` onto
       vLLM-Omni's and ComfyUI's Qwen-Image/FLUX paths.
       - Falsified if a capability cannot be expressed without SGLang concepts.
 - [ ] **4. A native implementation is configuration plus an engagement check.**
