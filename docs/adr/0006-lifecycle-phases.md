@@ -1,6 +1,13 @@
 # ADR 0006: Lifecycle phases follow the engine's compile and capture points
 
-Status: superseded by [ADR 0009](0009-lifecycle-constraints.md) on 2026-10-01 · originally accepted 2026-10-01
+Status: **superseded** by [ADR 0009](0009-lifecycle-constraints.md) on 2026-10-01 · originally accepted 2026-10-01
+
+> **Read [ADR 0009](0009-lifecycle-constraints.md) instead.** This ADR made SGLang's eight lifecycle stages the shared vocabulary. Those stages are SGLang's own, and generic implementations should not depend on one engine's stages. The original text is kept below,
+> unchanged, so the history of the design stays visible.
+
+<details>
+<summary>Original text</summary>
+
 Evidence: [architecture investigation](../architecture-investigation.md), part 6.
 
 ## Context
@@ -58,3 +65,5 @@ Rules:
 - **Two phases (install, execute).** Cannot express "must precede compile".
 - **Generic `before`/`after` edges between techniques.** Every ordering
   constraint found in the code is a phase constraint.
+
+</details>

@@ -1,6 +1,13 @@
 # ADR 0005: Technique → Implementation → Target (engine × model) binding
 
-Status: superseded by [ADR 0008](0008-capability-layer.md) on 2026-10-01 · originally accepted 2026-10-01
+Status: **superseded** by [ADR 0008](0008-capability-layer.md) on 2026-10-01 · originally accepted 2026-10-01
+
+> **Read [ADR 0008](0008-capability-layer.md) instead.** This ADR went straight from implementation to an engine × model binding. Read literally, that hid the standard capability layer, and it made Binding look like a replacement for engine- and model-specific adaptation. The original text is kept below,
+> unchanged, so the history of the design stays visible.
+
+<details>
+<summary>Original text</summary>
+
 Evidence: [architecture investigation](../architecture-investigation.md), parts 4, 5 and 8.
 
 ## Context
@@ -65,3 +72,5 @@ flowchart LR
   Simple, but every technique would be re-implemented for every target.
 - **Treating native features as "implementations" of our techniques by name
   alone.** This is how results end up mislabeled and incomparable.
+
+</details>

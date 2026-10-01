@@ -1,67 +1,53 @@
-# Investigation: do technique → implementation → seam abstractions match SGLang?
+# How Qwen-Image and FLUX actually run in SGLang
 
 Status: current · last substantive update 2026-10-01
 
-Scope: this is an evidence report. It reads the real Qwen-Image and FLUX code
-in SGLang diffusion and tests one hypothesis: optimization techniques can be
-separated from their implementations, and those implementations can plug into
-models and engines through a small set of standard seams.
+This is the **evidence** behind the [architecture](architecture.md). It traces
+real requests through SGLang's Qwen-Image and FLUX code to answer one
+question: can optimization techniques plug into models and engines through a
+small set of standard places, or not? It ends with the runtime experiments
+that could still prove the design wrong.
 
-> **Revised 2026-10-01.** The evidence in Parts 1–7 stands. The conclusions
-> first drawn from it, the TL;DR's "Revised shape" and Parts 8–10, were
-> recorded in ADRs 0005–0007. Those conclusions have been refined into
-> [architecture](architecture.md) and ADRs
-> [0008](adr/0008-capability-layer.md), [0009](adr/0009-lifecycle-constraints.md)
-> and [0010](adr/0010-v1-capabilities-and-first-techniques.md). The original
-> text is kept below for the record, with dated notes where it changed.
+## In short
 
-**Source pinned:** upstream `sgl-project/sglang` main at `8ca82118e`
-(2026-09-24). Paths below are relative to
-`python/sglang/multimodal_gen/`, and `denoising.py` means
-`runtime/pipelines_core/stages/denoising.py`. Line numbers are from that
-commit. The trace was done by reading code only; nothing was executed on a GPU.
+1. **The engine does almost everything, and does it the same way for every
+   model.** Request handling, the step-by-step denoising loop, guidance (CFG),
+   the noise scheduler, attention, matrix multiplies and image decoding are
+   shared SGLang code.
+2. **The models differ in only two places:** small configuration callbacks
+   (how the prompt and latents are prepared), and the inside of the
+   transformer.
+3. **"One block" means three different things.** Qwen-Image, FLUX.1 and
+   FLUX.2 chain their transformer blocks in three incompatible ways. What is
+   common is the **trunk**, the whole stack of blocks taken together.
+4. **SGLang re-implements each model.** Where a part of the model lives
+   depends on the engine *and* the model together.
+5. **SGLang compiles the model before any request arrives, and records CUDA
+   graphs during warmup.** When an optimization is installed therefore decides
+   whether it works at all.
+6. **SGLang already ships many optimizations as switches.** It also has an
+   official plugin mechanism that runs our code inside its GPU worker
+   processes.
 
----
+## How to read this
 
-## TL;DR
-
-- **The engine owns almost everything.** Request handling, the stage
-  pipeline, the denoising loop, CFG, the scheduler, the attention layer, the
-  linear layers and the decode stage are all **shared SGLang code**. Qwen and
-  FLUX diverge in only two places:
-  1. *config callbacks*: prompt post-processing, latent packing, `mu`, and the
-     conditioning kwargs;
-  2. *the inside of the DiT forward*: the block topology.
-- **"Block" is not a portable seam.** The three DiTs have three different trunk
-  shapes (see [1.3](#13-the-block-trunk-is-where-the-models-actually-differ)).
-  The portable unit is the **trunk**, meaning the whole block stack. Per-block
-  hooks need a model-specific description of the trunk.
-- **"Model adapter" and "engine adapter" are not independent axes.** SGLang
-  *re-implements* each model. `QwenImageTransformer2DModel` in SGLang is not
-  the diffusers class, and neither is ComfyUI's. Where to hook depends on
-  **(engine, model)** together. What *is* independent of the engine is a small
-  set of **model facts**: token layout, timestep scaling, CFG style and
-  sensitive layers.
-- **Two lifecycle phases are not enough.** SGLang compiles the DiT while it
-  *builds the pipeline*, before any request arrives. Anything that replaces
-  modules has to run before that. cache-dit has to mount before a deferred
-  compile. Breakable CUDA graphs capture during warmup.
-- **Many "techniques" are already native SGLang knobs.** They are selected by
-  server args, env vars or per-request sampling params. A native
-  implementation is therefore mostly a *configuration binding*, not code.
-- **Revised shape:** `Technique → Implementation → Target(engine × model) binding`.
-  The binding provides a few **seams** (launch, load, request, step, trunk),
-  and composition is checked through **resource ownership** plus
-  **lifecycle phase** plus **graph-mode compatibility**.
-  *CHANGED 2026-10-01:* a capability layer now sits between implementations
-  and targets, and Binding is glue between EngineAdapter and ModelSpec rather
-  than a replacement for them. See [architecture](architecture.md).
+- **Source:** upstream `sgl-project/sglang` at the commit pinned in
+  [ADR 0003](adr/0003-sglang-first-engine.md). Paths are relative to
+  `python/sglang/multimodal_gen/`, and `denoising.py` means
+  `runtime/pipelines_core/stages/denoising.py`.
+- **Abbreviations:** Q = Qwen-Image, F1 = FLUX.1, F2 = FLUX.2. "Graph capture"
+  means SGLang's breakable CUDA graphs.
+- **Evidence is folded.** Each section states its finding in prose; the
+  `file:line` tables are inside the collapsible blocks.
+- This is code reading only; nothing in it was run on a GPU.
 
 ---
 
-## Part 1: the real inference path
+## 1. One request, end to end
 
-### 1.1 Side-by-side call graph
+The model runs in a separate **GPU worker process**, not in the HTTP server
+that receives the request. The request crosses into it over a socket, and
+everything in the "GPU worker process" box happens there.
 
 ```mermaid
 flowchart TD
@@ -90,8 +76,8 @@ flowchart TD
     end
 ```
 
-The same graph serves both models. What differs is the configuration fed to
-the shared stages and the inside of the DiT:
+The same path serves both models. What changes is the configuration handed to
+the shared stages, and the transformer itself:
 
 | Step | Qwen-Image | FLUX.1-dev | FLUX.2 / klein |
 |---|---|---|---|
@@ -105,15 +91,15 @@ the shared stages and the inside of the DiT:
 | DiT forward | `qwen_image.py:2287` | `flux.py:1335` | `flux_2.py:1630` |
 | VAE | `AutoencoderKLQwenImage` (Wan-style), `optimize_vae` uses the Wan fast path | AutoencoderKL | `AutoencoderKLFlux2` (BN stats), `flux2_vae_cuda_opt.py` |
 
-**Where the paths diverge and converge.** In terms of *control flow*, the two
-paths are identical until `_predict_noise` calls `current_model(**call_kwargs)`
-(`denoising.py:2503`), and they rejoin as soon as the noise prediction comes
-back. In terms of *data*, they diverge earlier, but only through
-`PipelineConfig` callbacks: encoder post-processing, pack/unpack,
-`prepare_pos/neg_cond_kwargs`, `mu`, and VAE scale/shift. The engine calls
-these callbacks; it does not branch on the model.
+**Where they part and rejoin.** The *control flow* is identical until the
+loop calls the transformer (`_predict_noise`, `denoising.py:2503`), and it
+rejoins as soon as the noise prediction comes back. The *data* differs
+earlier, but only through configuration callbacks: prompt post-processing,
+latent packing, the schedule shift `mu`, and the conditioning inputs. The
+engine calls these callbacks; it never branches on the model.
 
-### 1.2 Stage ownership
+<details>
+<summary>Evidence: who owns each stage (file:line)</summary>
 
 | Stage | Location | Shared? | Owner |
 |---|---|---|---|
@@ -128,7 +114,10 @@ these callbacks; it does not branch on the model.
 | GEMM | `LinearBase.quant_method.apply` (`runtime/layers/linear.py:219,311,513,1199`) | shared | engine |
 | VAE decode | `DecodingStage.decode` (`decoding.py:205`) | shared stage, model VAE | engine + model |
 
-### 1.3 The block trunk is where the models actually differ
+</details>
+
+
+## 2. The trunk is where the models really differ
 
 ```mermaid
 flowchart LR
@@ -143,20 +132,46 @@ flowchart LR
     end
 ```
 
-The block signatures disagree on argument names (`temb_img_silu`, `temb`,
-`temb_mod_params_img`), on return arity, and on where text and image are
-joined. Even the *value* a block returns can be a lazy tuple
-(`_materialize_gated_residual`, `flux_2.py:1735`). A block wrapper written
-against one model breaks on the next.
+The three block loops disagree on argument names, on how many values a block
+returns, and on where the text and image streams are joined. FLUX.2 blocks can
+even return a lazy tuple that has to be materialized
+(`_materialize_gated_residual`, `flux_2.py:1735`). A wrapper written for one
+model's blocks breaks on the next model.
 
-What does stay common is the **trunk boundary**. Every model computes some
-pre-processing, then a trunk mapping `(hidden, encoder_hidden) → hidden`,
-then `norm_out` and `proj_out`. SGLang's own Spectrum cache already treats the
-whole trunk as the unit it skips (`flux.py:1446-1475`).
+What *is* shared is the boundary around the whole stack. Each model prepares
+its inputs, runs a trunk that maps `(image tokens, text tokens) → image
+tokens`, and then applies the output layers. SGLang's own Spectrum cache
+already treats the whole trunk as the unit it skips (`flux.py:1446-1475`).
 
----
+## 3. Which interception points are real
 
-## Part 2: candidate seams
+| Proposed point | Verdict | In one line |
+|---|---|---|
+| model load | keep, but split | Quantization and fused QKV are decided when modules are *constructed*, before weights load. |
+| denoise step | **keep** | Shared engine code with all the step state in view; the method is designed to be overridden. |
+| transformer call | merge into denoise step | The call is shared; its arguments are model-specific, so treat them as opaque. |
+| transformer block | **not portable** | Three incompatible trunk shapes. See [section 2](#2-the-trunk-is-where-the-models-really-differ). |
+| attention | select, don't wrap | 25 backends are chosen by a launch flag; per-request swaps are refused under compile or graph capture. |
+| linear (matmul) | keep | Every SGLang linear layer has a swappable `quant_method`; which layers count is model-specific. |
+| CFG | part of denoise step | Shared policy object; FLUX.1-dev and FLUX.2-klein don't use true CFG at all. |
+| scheduler | part of request setup | Timesteps are fixed per request; the shift `mu` is model-specific. |
+| latent / resolution | not a seam | Repacking is per model; SGLang already ships progressive resolution per model. |
+| VAE | load-time only | A module to replace at load, not a runtime hook. |
+
+Four points the original list missed:
+- **launch:** server flags and environment, the only way to reach most
+  built-in optimizations.
+- **request:** per-request switches. Cache-dit, progressive resolution, the
+  CFG gate and fused-kernel quality levels are toggled per request.
+- **trunk:** see section 2.
+- **worker injection:** SGLang loads plugins (entry-point group
+  `sglang.multimodal_gen.plugins`) in **every** GPU worker before the
+  runtime starts (`worker_bootstrap.py:131`). Plugins can hook any function
+  before, after, around or instead of it. Patching the launching process
+  instead does nothing.
+
+<details>
+<summary>Evidence: every proposed point, with locations and risks</summary>
 
 | Seam | Qwen location | FLUX location | Common abstraction? | Phase | Verdict and risks |
 |---|---|---|---|---|---|
@@ -171,21 +186,36 @@ whole trunk as the unit it skips (`flux.py:1446-1475`).
 | `latent/resolution` | `progressive_resolution/qwen_image.py:53` | `progressive_resolution/flux.py`, `flux_2.py` | **no** | request | **Reject as a seam.** Pack/unpack/repack is model-specific, and SGLang already implements it per model behind `progressive_mode`. Treat it as a native-only technique. |
 | `VAE` | `DecodingStage` + `optimize_vae` (`platforms/cuda.py:838`) | same | stage is common; module is not | load | **Keep only as a load-time module target**, not as a runtime seam. |
 
-### Seams the hypothesis missed
 
 | Missing seam | Evidence | Why it is needed |
 |---|---|---|
 | **launch** (server args and env) | Attention backend, `--enable-torch-compile`, `--enable-breakable-cuda-graph`, `--quantization`, `SGLANG_CACHE_DIT_*` | Most native techniques can *only* be expressed here. |
 | **request** (per-request sampling params and plan) | `enable_cache_dit`, `progressive_mode`, `cfg_gate_step`, `quality`, `enable_spectrum` (`configs/sample/sampling_params.py:317-345`) | A large share of SGLang's optimizations are toggled per request. |
-| **trunk** | see [1.3](#13-the-block-trunk-is-where-the-models-actually-differ) | This is the portable unit for whole-trunk caching (TeaCache residual variants, first-block cache, Spectrum). |
+| **trunk** | see [1.3](#2-the-trunk-is-where-the-models-really-differ) | This is the portable unit for whole-trunk caching (TeaCache residual variants, first-block cache, Spectrum). |
 | **worker injection** (engine-internal, not a technique seam) | `worker_bootstrap.py:131`: `load_plugins()` and `apply_plugin_hooks()` run in **every** spawned worker; entry-point group `sglang.multimodal_gen.plugins`, allow-list `SGLANG_PLUGINS`; hooks are BEFORE/AFTER/AROUND/REPLACE on dotted targets (`runtime/platforms/plugins.py:88`) | Every hook we install has to cross a process boundary. Patching the launching process does nothing. |
 
----
+</details>
 
-## Part 3: techniques mapped onto the code
 
-"Native" means SGLang already implements it. Q / F1 / F2 are Qwen-Image,
-FLUX.1 and FLUX.2.
+## 4. What SGLang already ships
+
+| Technique | In SGLang? | Wired for Q / F1 / F2 | What it needs from us | Watch out |
+|---|---|---|---|---|
+| TeaCache | yes | **no / no / no** | trunk + a per-model signal | breaks graph capture silently |
+| Block cache (cache-dit DBCache) | yes, external package | yes / yes / yes | nothing (native) | must mount before compile; refused under graph capture |
+| Step skip | Spectrum (F1 only), cache-dit step masks | no / yes / no | the denoise step only | in-transformer versions break graph capture |
+| Fewer steps / new schedule | yes | yes / yes / yes | request setup | changes other caches' step schedules |
+| CFG gate | yes | meaningful for Q only | denoise step | off when CFG runs in parallel |
+| Block skipping | SD3 only | no / no / no | per-model block access | quality-sensitive |
+| Progressive resolution | yes | yes / yes / yes | nothing (native only) | refuses sequence parallelism |
+| FP8 / NVFP4 linear | yes | yes / yes / yes (NVFP4: F2 checkpoint) | nothing (native) | changes which fused QKV exists |
+| Fused kernels | yes | yes / yes / yes | model code | some are refused under graph capture |
+| Attention backend | 25 backends | all | launch flag | per-request swaps refused under compile |
+| torch.compile | whole transformer | whole only (no regional for Q/F1/F2) | launch flag | happens at pipeline build |
+| Graph capture | yes | yes / yes / **no** | launch flag | refuses cache-dit and quality kernels |
+
+<details>
+<summary>Evidence: the full technique matrix (install time, decision time, conflicts, file:line)</summary>
 
 | Technique | Concept | Native in SGLang | Q / F1 / F2 wired? | Install | Decides at | Seams | Generic implementation realistic? | Compile / graph | Conflicts found in code |
 |---|---|---|---|---|---|---|---|---|---|
@@ -206,48 +236,36 @@ FLUX.1 and FLUX.2.
 | **torch.compile** | Inductor over the DiT | `DenoisingStage._maybe_torch_compile` (`denoising.py:535`) | whole DiT only (no `_compile_conditions` for Q/F1/F2) | **pipeline build** (or deferred) | static | launch | native | — | skipped under breakable CUDA graphs; refuses per-request attention override |
 | **Breakable CUDA graph** | Capture the DiT with eager breaks at attention | `breakable_cuda_graph/runner.py` | yes / yes / **no** (allowlist `server_args.py:234`) | lazy; captured at **warmup** | replay | launch | native | replaces compile | cache-dit, quality fusions, attention override; **TeaCache and Spectrum are unguarded and silently become no-ops** |
 
-### Worked example: TeaCache
+</details>
 
-- **Concept:** skip the transformer trunk when the timestep-modulated input
-  has changed little since the last computed step. Reuse the cached trunk
-  residual instead.
-- **Install:** at request init. Attach the controller, reset its state at step 0.
-- **Execute:** at runtime, once per step and per CFG branch.
-- **Seams it needs:**
-  1. the step seam, for step index, branch and refresh;
-  2. the trunk seam, to run the trunk or replay the residual;
-  3. a model-bound **signal tap**: the modulated input of the first block.
-- **Qwen:** no native wiring. The modulated input comes from `img_mod` in
-  the first block (`qwen_image.py:1306`). CFG has two sequential branches,
-  and each needs its own state.
-- **FLUX.1:** no native wiring. The `temb`-modulated `norm1` of the first
-  double block. No true CFG by default.
-- **FLUX.2:** no native wiring. Modulation is shared across blocks and
-  computed once (`flux_2.py:1669-1671`), which makes the signal cheap.
-- **Can the implementation be shared?** *Partially.* The controller and the
-  trunk replay are generic. The signal tap and the polynomial coefficients
-  are per model.
 
----
+**Worked example: TeaCache.** TeaCache skips the trunk when the
+timestep-modulated input has barely changed since the last computed step, and
+reuses the cached trunk output instead.
+- **Where it plugs in:** it needs three things. The denoise step tells it
+  which step and which CFG branch it is on. The trunk lets it run or replay.
+  A per-model *signal tap* gives it the modulated input of the first block.
+- **Native coverage:** SGLang has a TeaCache, but none of our models calls
+  it.
+- **The per-model part:** the signal comes from `img_mod` in Qwen's first
+  block (`qwen_image.py:1306`), and from the shared modulation computed once
+  per forward in FLUX.2 (`flux_2.py:1669-1671`).
+- **What can be shared:** the controller is generic. The signal tap and the
+  rescale coefficients are per model.
 
-## Part 4: is the Technique / Implementation split useful?
+## 5. Is "technique vs implementation" a useful split?
 
-**Test case: "TeaCache" with implementations `sglang-native`, `ours-generic`,
-`model-specific`.**
+Yes, but cache-dit showed where to draw the line. What SGLang ships for these
+models is cache-dit's block cache. It decides from a *block residual*, not
+from the *modulated input*, and it reuses per-block outputs. So it is a
+**different technique**, not another implementation of TeaCache.
 
-- **`sglang-native-teacache` does not exist for our models.** SGLang's
-  TeaCache runs only where the model calls the mixin, which none of Q, F1 or
-  F2 does.
-- **What SGLang ships for these models is cache-dit's DBCache/FBCache.** Its
-  decision signal is a *block residual* difference, not a *timestep-modulated
-  input* difference, and its payload is per-block residuals. That makes it a
-  **different technique**, not another implementation of TeaCache.
+> **Rule:** two implementations are the same technique only if they share the
+> decision signal, the decision rule and the reused payload. They may differ
+> only in mechanism: where they hook, which kernel, which language.
 
-**Rule (adopted):** two implementations belong to the same technique when they
-have the same **decision signal**, **decision rule** and **reused payload**.
-They may differ only in *mechanism*: where they hook, which kernel they use,
-or which language they are written in. If the signal, rule or payload changes,
-it is a different technique.
+<details>
+<summary>The questions this answered</summary>
 
 | Question | Answer from the code |
 |---|---|
@@ -258,9 +276,14 @@ it is a different technique.
 | Should native have priority? | **By default, yes.** Native implementations already handle the engine's ordering, for example cache-dit deferring compile and mounting before it (`denoising.py:544`). But it is a default, not a rule; the measurement decides. |
 | SGLang has cache-dit, not exactly our algorithm? | Register cache-dit as its **own technique** (block-residual cache) and implement TeaCache ourselves. Never label cache-dit "TeaCache"; a mislabeled result cannot be compared with anything. |
 
----
+</details>
 
-## Part 5: are "model" and "engine" orthogonal axes?
+
+## 6. Are "model" and "engine" independent?
+
+Not where hooks are concerned. "Where is Qwen's first block?" has a different
+answer in SGLang, in diffusers and in ComfyUI, because each re-implements the
+model.
 
 | Concern | Model? | Engine? | Evidence |
 |---|---|---|---|
@@ -271,26 +294,14 @@ it is a different technique.
 | Timestep semantics | yes | no | Qwen divides by 1000 in the DiT; FLUX.2 multiplies guidance by 1000 inside; the scheduler is shared. |
 | Attention replacement | yes (token layout) | yes (backend registry) | `selector.py:171` plus `img_shapes`, `txt_seq_lens`. |
 
-**Conclusion: the axes are not independent at the hooking level.** "Where do
-I hook block 0 of Qwen?" has a different answer in SGLang
-(`QwenImageTransformer2DModel.transformer_blocks`), in diffusers, and in
-ComfyUI. What does separate cleanly is:
+What *does* separate cleanly became the three responsibilities in the
+[architecture](architecture.md#terms): EngineAdapter, ModelSpec and
+Binding.
 
-- **ModelSpec**: engine-independent *facts* about the model. Token layout
-  (text prefix + image grid), timestep scale, CFG style, block count and
-  roles, layers that are sensitive to precision.
-- **Engine adapter**: engine-wide *mechanics*. How to inject into the worker,
-  launch options, request params, the step seam, and the graph and compile
-  modes.
-- **Binding (engine × model)**: a thin map. *Where* the trunk, the signal tap
-  and the module groups live for this model in this engine.
+## 7. SGLang's lifecycle
 
----
-
-## Part 6: lifecycle
-
-The proposed two phases (install, execute) are not enough. The compile point
-and the graph-capture point are fixed by the engine:
+These are **SGLang's** stages. Other engines will differ; see
+[ADR 0009](adr/0009-lifecycle-constraints.md).
 
 ```mermaid
 flowchart LR
@@ -303,6 +314,23 @@ flowchart LR
     S --> F["request_finalize<br/>state reset"]
 ```
 
+What this means for an optimization:
+1. **Anything that changes the model's modules** has to be in place before
+   the pipeline is built. Changing it later means reloading the model.
+2. **Python decisions *inside* the transformer** are lost under graph capture:
+   the recorded graph replays without them, and SGLang does not warn.
+   TeaCache and Spectrum are in this group. Decisions in the denoising loop
+   *around* the transformer are expected to be safe, because graphs are
+   replayed once per transformer call (`denoising.py:2500`,
+   `breakable_cuda_graph/runner.py:300`). That is unverified; experiment 1
+   tests it.
+3. **Optimizations attached per request** that change the forward pass must
+   come before a deferred compile. cache-dit is the only native one, and
+   SGLang orders it itself.
+
+<details>
+<summary>Evidence: the order SGLang actually runs these in</summary>
+
 Evidence:
 - **Order of load steps:** `transformer_loader.py:246` → `fsdp_load.py:485-486` → `transformer_loader.py:549`.
 - **Compile:** happens in `DenoisingStage.__init__` (`denoising.py:380-383`), which runs during `create_pipeline_stages` (`composed_pipeline_base.py:172`).
@@ -313,59 +341,77 @@ Evidence:
   4. deferred compile
 - **Graph capture:** happens only when `is_warmup` (`breakable_cuda_graph/runner.py:575-584`).
 
-**Rules this imposes:**
-1. Anything that changes the module tree (quantization, fusion, module
-   replacement) must be in **construct** or **post_load**, which comes
-   *before* `pipeline_build`. Changing it later means reloading the model.
-2. Runtime policies that use Python control flow (TeaCache, step skip,
-   Spectrum) are not compatible with **graph capture**. Captured graphs
-   replay without them, and SGLang does not warn.
-3. A technique attached at **request_init** that modifies the forward must
-   precede a deferred compile. cache-dit is the only native one, and SGLang
-   enforces its ordering itself.
+</details>
+
+
+## 8. Conflicts found in the code
+
+Every conflict below is real, and each is caught by one field of the
+[implementation contract](architecture.md#implementation-contract).
+
+| Conflict found in SGLang | Caught by |
+|---|---|
+| FP8 and NVFP4 both want the same linear layers; TeaCache, Spectrum and cache-dit all want the trunk; the CFG gate and parallel CFG both want the guidance branch | `owns` |
+| cache-dit, quality kernels and per-request attention swaps are refused under graph capture; TeaCache and Spectrum silently do nothing under it | `constraints` (`dynamic_in_forward`) and the target's graph mode |
+| replacing modules after the pipeline is built runs uncompiled or needs a reload | `constraints` (`mutates_model`) |
+| TeaCache and Spectrum keep state on the module and reset it at step 0 | `constraints` (`request_state`) |
+| graph capture is not allowed for FLUX.2; progressive resolution refuses sequence parallelism; CFG techniques need true CFG, which FLUX.1-dev lacks | `requires` (resolution fails) |
+
+**Worked combination:** NVFP4 + fused QKV + torch.compile + TeaCache + step skip.
+- NVFP4 and fused QKV are coupled: on FLUX.2 the fused QKV exists *because*
+  of the quantization config (`flux_2.py:514`).
+- Both must be in place before compile.
+- Step skip and TeaCache can coexist only if a skipped step never reaches the
+  trunk, so the composer has to order them or reject the pair.
+- TeaCache is rejected whenever graph capture is on.
 
 ---
 
-## Part 7: composition and conflicts
+## Open items
 
-Every field below exists because of a concrete conflict found in the code.
-Generic `before`/`after` edges are not needed; phase order covers ordering.
+Runtime experiments, ordered so that the cheapest one that could *falsify* the
+architecture runs first. Each one names the claim it can break.
 
-| Field | Values | Concrete conflict it catches |
-|---|---|---|
-| `phase` | one of the lifecycle stages above | Module replacement after `pipeline_build` silently runs uncompiled or requires a reload. |
-| `owns` | resource names: `linear.quant`, `module.qkv`, `trunk.forward`, `step.prediction`, `cfg.branch`, `attention.backend`, `schedule`, `vae.decode` | Two exclusive owners of one resource: NVFP4 vs FP8 on the same linears; TeaCache vs Spectrum vs block cache on the trunk; CFG gate vs CFG-parallel on the branch. |
-| `graph` | `eager_only` / `compile_ok` / `capture_ok` | cache-dit, quality sites and attention override are refused under breakable CUDA graphs; TeaCache and Spectrum silently do nothing under capture. |
-| `state` | `none` / `request` (and a reset point) | TeaCache and Spectrum keep state on the *module*, reset at step 0 on the positive branch (`teacache.py:287`); progressive resolution re-refreshes the cache per stage (`progressive_resolution/denoising.py:615`). |
-| `requires` | engine, model and capability predicates | Breakable CUDA graphs not allowed for FLUX.2; progressive resolution refuses sequence parallel; CFG techniques need true CFG, which FLUX.1-dev lacks; regional compile needs `_compile_conditions`, which Q, F1 and F2 lack. |
-
-Worked combination: **NVFP4 + QKV fusion + torch.compile + TeaCache + step skip**
-- NVFP4 and QKV fusion both belong to `construct`. Under FP4 on FLUX.2 they
-  are *coupled*: the fused QKV is chosen *because of* the quant config
-  (`flux_2.py:514`). Model them as one implementation, or as `requires`.
-- torch.compile belongs to `pipeline_build` and is `compile_ok`. It must come
-  after both of the above.
-- TeaCache and step skip both claim the per-step prediction. Step skip owns
-  `step.prediction`, and TeaCache owns `trunk.forward` + `step` reads. They
-  can coexist only if one runs inside the other: a skipped step never reaches
-  the trunk. The composer must order them explicitly or reject the pair.
-- TeaCache is `eager_only` for its control flow. Under torch.compile with
-  `fullgraph=False`, its decision forces a graph break each step, which is
-  acceptable. Under breakable CUDA graphs it must be **rejected**, because a
-  captured graph would replay without it.
+- [ ] **1. Step control is engine-wide and capture-safe.** One plugin
+      (`sglang.multimodal_gen.plugins`) wraps `_run_denoising_step` and skips
+      the DiT on chosen steps. Run the *same* code on Qwen-Image and
+      FLUX.2-klein, then on Qwen-Image with breakable CUDA graphs on.
+      - Falsified if either model needs model-specific code to skip a step.
+      - Falsified if graph replay misbehaves when calls are skipped.
+- [ ] **2. Trunk control resolves per Binding and survives compile.**
+      Implement `trunk_control` for both models with reuse disabled, and
+      require OFF-identity (bit-exact against the unwrapped model) in eager
+      and under torch.compile.
+      - Falsified if the wrapper cannot be identical in eager mode.
+      - Falsified if compile breaks it beyond an acceptable graph-break count.
+- [ ] **3. Capabilities are not SGLang-shaped.** By code reading only, map
+      `step_control`, `trunk_control` and `request_local_state` onto
+      vLLM-Omni's and ComfyUI's Qwen-Image/FLUX paths.
+      - Falsified if a capability cannot be expressed without SGLang concepts.
+- [ ] **4. A native implementation is configuration plus an engagement check.**
+      Launch native FP8 on both models and count the live FP8 `quant_method`s.
+      - Falsified if model-specific glue is needed, e.g. Qwen-Image-2.1's
+        plain `nn.Linear`.
+- [ ] Check whether FLUX.2 klein's layer count and forward kwargs differ from
+      FLUX.2-dev in the loaded checkpoint config (unverified, read from config
+      only).
+- [ ] Decide whether to support FLUX.1 at all. FLUX.2-klein is the target,
+      and FLUX.1 differs: Spectrum is wired there, it uses a distilled guidance
+      embedding, and its blocks join per block.
 
 ---
 
-## Part 8: revised architecture
+## Appendix: the first conclusions (superseded)
 
-> *Superseded 2026-10-01 for Parts 8–10 by [architecture](architecture.md).*
-> Notable corrections:
-> - Implementations depend on capabilities, not on seams.
-> - Block access is an optional, target-specific capability, not a rejected
->   abstraction.
-> - Measured values (sensitive layers, coefficients) belong in measurement
->   history, not in ModelSpec.
-> - SGLang's lifecycle phases are SGLang-specific.
+The conclusions first drawn from this evidence were recorded in ADRs
+0005–0007. They have since been refined into the [architecture](architecture.md)
+and ADRs 0008–0010. The original text is kept here unchanged.
+
+<details>
+<summary>Original Parts 8–10 (superseded 2026-10-01)</summary>
+
+#### Part 8: revised architecture
+
 
 ```mermaid
 flowchart TB
@@ -405,7 +451,7 @@ actually run", is mandatory for both.
 
 ---
 
-## Part 9: minimal interfaces
+#### Part 9: minimal interfaces
 
 Every field below is required by a named technique. A field with no
 technique behind it was left out.
@@ -448,9 +494,9 @@ nothing.
 
 ---
 
-## Part 10: verdict
+#### Part 10: verdict
 
-### What is truly generic (shared by Qwen-Image and FLUX)
+##### What is truly generic (shared by Qwen-Image and FLUX)
 - The request → stage → denoise-loop → scheduler → decode skeleton, which
   SGLang itself owns and shares.
 - A **step-level** policy that treats the noise prediction as an opaque
@@ -461,7 +507,7 @@ nothing.
   capabilities.
 - Measurement and gating (Core).
 
-### What must stay model-specific
+##### What must stay model-specific
 - Block topology, arity and stream joins (three different shapes).
 - Signal taps and per-model coefficients (TeaCache).
 - CFG style (Qwen: true CFG with norm-rescale; FLUX.1-dev: distilled; klein: none).
@@ -469,7 +515,7 @@ nothing.
 - Which modules are quantizable or fused: Qwen-2.1 plain `nn.Linear`, FLUX.2
   merged QKV+MLP, dense guards.
 
-### What must stay engine-specific
+##### What must stay engine-specific
 - Worker-process injection: SGLang plugin hooks.
 - Launch args and env, per-request sampling params.
 - The `DenoisingStage` step seam and `Req`/forward-context state.
@@ -477,7 +523,7 @@ nothing.
 - Native techniques: cache-dit, Spectrum, CFG gate, progressive resolution,
   quantization configs, fused-kernel sites.
 
-### Bad abstractions to avoid
+##### Bad abstractions to avoid
 - **A universal per-block seam.** It does not survive FLUX.2's
   join-once/return-one-tensor trunk.
 - **"Model adapter" independent of the engine.** Hook locations belong to the
@@ -493,7 +539,7 @@ nothing.
 - **Generic `before`/`after` edges.** Lifecycle phase plus `owns` covers
   every ordering found.
 
-### Recommended V1 architecture
+##### Recommended V1 architecture
 See [ADR 0005](adr/0005-target-binding-architecture.md) and
 [ADR 0007](adr/0007-v1-seams-and-first-techniques.md):
 - **Seams:** `launch`, `load` (construct and post_load), `request`, `step`,
@@ -502,41 +548,12 @@ See [ADR 0005](adr/0005-target-binding-architecture.md) and
   (SGLang×Qwen-Image, SGLang×FLUX.2-klein); a composer that checks `phase`,
   `owns`, `graph` and `requires`.
 
-### Recommended first three techniques
+##### Recommended first three techniques
 | # | Technique | Exercises | Why it validates the architecture |
 |---|---|---|---|
 | 1 | **Step skip / fixed-step prediction reuse** (our generic implementation) | `step` seam, request state, `eager_only` | Fully engine-side and model-agnostic. If one implementation runs unchanged on Qwen and FLUX, the step seam is real. Graph-mode rejection gets exercised immediately. |
 | 2 | **TeaCache** (our generic implementation; SGLang has none wired for Q/F1/F2) | `trunk` seam, model-bound signal tap, per-branch request state | The hardest test of the binding: the same controller with two different trunk shapes and CFG styles. Pairing it with technique 1 tests `owns` and nesting. |
 | 3 | **FP8 linear** (SGLang-native implementation) | `launch`/`construct` phase, `linear.quant` ownership, native-as-configuration | Proves that a native implementation is a configuration binding with an engagement check. Interacts with QKV fusion and compile, which tests phase ordering. NVFP4 follows once FP8 works. |
 
-## Open items
+</details>
 
-Runtime experiments, ordered so that the cheapest one that could *falsify* the
-architecture runs first. Each one names the claim it can break.
-
-- [ ] **1. Step control is engine-wide and capture-safe.** One plugin
-      (`sglang.multimodal_gen.plugins`) wraps `_run_denoising_step` and skips
-      the DiT on chosen steps. Run the *same* code on Qwen-Image and
-      FLUX.2-klein, then on Qwen-Image with breakable CUDA graphs on.
-      - Falsified if either model needs model-specific code to skip a step.
-      - Falsified if graph replay misbehaves when calls are skipped.
-- [ ] **2. Trunk control resolves per Binding and survives compile.**
-      Implement `trunk_control` for both models with reuse disabled, and
-      require OFF-identity (bit-exact against the unwrapped model) in eager
-      and under torch.compile.
-      - Falsified if the wrapper cannot be identical in eager mode.
-      - Falsified if compile breaks it beyond an acceptable graph-break count.
-- [ ] **3. Capabilities are not SGLang-shaped.** By code reading only, map
-      `step_control`, `trunk_control` and `request_local_state` onto
-      vLLM-Omni's and ComfyUI's Qwen-Image/FLUX paths.
-      - Falsified if a capability cannot be expressed without SGLang concepts.
-- [ ] **4. A native implementation is configuration plus an engagement check.**
-      Launch native FP8 on both models and count the live FP8 `quant_method`s.
-      - Falsified if model-specific glue is needed, e.g. Qwen-Image-2.1's
-        plain `nn.Linear`.
-- [ ] Check whether FLUX.2 klein's layer count and forward kwargs differ from
-      FLUX.2-dev in the loaded checkpoint config (unverified, read from config
-      only).
-- [ ] Decide whether to support FLUX.1 at all. FLUX.2-klein is the target,
-      and FLUX.1 differs: Spectrum is wired there, it uses a distilled guidance
-      embedding, and its blocks join per block.

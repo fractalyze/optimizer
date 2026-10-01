@@ -2,17 +2,27 @@
 
 Status: current · last substantive update 2026-10-01
 
-Scope: this document owns the definitions of the architecture's concepts, the
-rule for where knowledge belongs, and how a technique gets resolved onto a
-concrete runtime. The evidence behind it is the
-[SGLang investigation](architecture-investigation.md). The decisions and the
-alternatives they replaced are in
-[ADR 0008](adr/0008-capability-layer.md),
-[ADR 0009](adr/0009-lifecycle-constraints.md) and
-[ADR 0010](adr/0010-v1-capabilities-and-first-techniques.md).
+This is the current design, and the place where its terms are defined. Why
+each part is shaped this way is in the ADRs
+([0008](adr/0008-capability-layer.md), [0009](adr/0009-lifecycle-constraints.md),
+[0010](adr/0010-v1-capabilities-and-first-techniques.md)). The evidence from
+SGLang's code is in the [investigation](architecture-investigation.md).
 
-All SGLang references are to upstream `sgl-project/sglang` @ `8ca82118e`,
-with paths relative to `python/sglang/multimodal_gen/`.
+## In short
+
+- The optimizer picks **techniques**, like "TeaCache" or "FP8". It never
+  needs to know how an engine or a model is built.
+- Each technique has one or more **implementations**. An implementation says
+  which abstract **capabilities** it needs, for example "control each
+  denoising step" or "run or replay the transformer trunk".
+- A **target** is one engine running one model, such as SGLang running
+  Qwen-Image. It answers those needs from three places:
+  - what the engine does for every model (**EngineAdapter**);
+  - what the model is in any engine (**ModelSpec**);
+  - where this model lives inside this engine (**Binding**).
+- Each capability is answered by whichever place can provide it. This
+  **capability resolution** is why a simple technique never touches
+  model-specific code.
 
 ## The picture
 
@@ -44,234 +54,226 @@ flowchart TB
     RT --> CORE -- "results + empirical knowledge" --> OPT
 ```
 
-Not every technique passes through every layer. Each capability an
-implementation requires is resolved by whichever layer can provide it.
-**Capability resolution** is that mapping, and it is a first-class step.
+## A walk through one example
 
-## Core concepts
+Follow **TeaCache on Qwen-Image in SGLang** from top to bottom:
 
-| Concept | Definition | Example |
+1. The **optimizer** chooses technique `teacache` with a threshold.
+2. The implementation `fractalyze-teacache` says it needs four capabilities:
+   - the current step and timestep;
+   - somewhere to keep state for this request;
+   - a way to run or replay the transformer trunk;
+   - a cheap signal that predicts whether the trunk's output will change.
+3. **Resolution** finds who provides each one:
+   - The step, timestep and request state are the same for every model in
+     SGLang, so **SGLangAdapter** provides them.
+   - The trunk and the signal live in different places in every model, so
+     **SGLangQwenBinding** provides them. It knows that Qwen's trunk is the
+     `transformer_blocks` loop, and that the signal is the first block's
+     modulation.
+   - **QwenImageSpec** contributes what is true of Qwen in any engine: it
+     uses true CFG, so TeaCache keeps separate state per CFG branch.
+4. The **composer** checks the combination. TeaCache makes decisions inside
+   the transformer, so it is refused if graph capture is on.
+5. The concrete runtime runs it. SGLang loads our plugin in its GPU worker,
+   and the plugin attaches at the seams the adapter and binding named.
+6. **Core** measures speed and quality, checks that TeaCache really skipped
+   steps, and records the result. The optimizer uses it to pick the next try.
+
+Step skip, by contrast, needs only the step and request state. It resolves
+entirely in SGLangAdapter and never touches a Binding. That difference is the
+point of resolution.
+
+## Terms
+
+**Technique.** An optimization idea. It is defined by three things: the
+signal it decides from, the rule it decides with, and what it reuses or
+replaces. It also has a schema of *conceptual* parameters. Two
+implementations are the same technique only if all three match. That is why
+cache-dit's block cache is not "TeaCache".
+
+**Implementation.** One concrete way to realize a technique. It is either:
+- **native:** it switches on a feature the engine already has, e.g.
+  `sglang-native-fp8`;
+- **generic:** our own code, written against capabilities, e.g.
+  `fractalyze-teacache`.
+
+Both kinds follow the same [contract](#implementation-contract).
+
+**Capability.** An abstract operation an implementation needs, described by
+what it lets you do and not by where it lives. Example: `step_control` means
+"observe each denoising step and decide whether to compute, reuse or replace
+the prediction".
+
+**Seam.** The concrete place where one target provides a capability.
+Example: SGLang's `DenoisingStage._run_denoising_step`, reached through a
+plugin hook. Seams are private to adapters and bindings, and implementations
+never name them. If they did, our "generic" code would really be SGLang code.
+
+**EngineAdapter.** Everything about one engine that is the same for all
+models: how its worker processes start, how we inject code into them, where
+per-request state lives, when it compiles and records graphs, its shared
+denoising loop, and its built-in features. Example: `SGLangAdapter`.
+
+**ModelSpec.** What a model family *is*, true in every engine. Examples:
+whether it uses true CFG, how it scales timesteps, how its text and image
+streams are arranged. It holds no measured numbers. Example: `QwenImageSpec`.
+
+**Binding.** Glue that only makes sense for one engine × model pair. It says
+where a logical part, like "the trunk", lives in that engine's version of the
+model, and translates the engine's native state into a capability's standard
+form. It sits between EngineAdapter and ModelSpec and replaces neither.
+Example: `SGLangQwenBinding`.
+
+**Measurement history.** Everything learned by measuring: good thresholds,
+fitted coefficients, layers that are sensitive to precision, the quality cost
+of a setting. These depend on model, technique, implementation, hardware,
+workload and quality gate together, so they are *not* model facts. In V1 this
+is simply what Core records; there is no separate type.
+
+## Where knowledge belongs
+
+Ask in this order:
+
+1. Is it **measured** rather than derived from the architecture? It goes in
+   **measurement history**.
+2. Is it the **same for many models** in one engine? It goes in the
+   **EngineAdapter**.
+3. Is it **true of the model in every engine**? It goes in the **ModelSpec**.
+4. Does it **only make sense for one engine × model pair**? It goes in the
+   **Binding**.
+
+One exception: when the engine already records a per-model fact itself (an
+allowlist, a registry), the EngineAdapter reads it from the engine instead of
+copying it.
+
+The rule, tested on real cases:
+
+| Fact | Belongs in | Because |
 |---|---|---|
-| **Technique** | An optimization *concept*: a decision signal, a decision rule, and the payload it reuses or replaces, plus a schema of conceptual parameters. Two implementations belong to the same technique only if all three match. | `teacache` (signal: rel-L1 of the timestep-modulated input; rule: accumulated threshold; payload: trunk residual) |
-| **Implementation** | One concrete way to realize a technique, with the contract in [Implementation contract](#implementation-contract). Either *native* (configures an engine feature) or *generic* (our code, written against capabilities). | `sglang-native-fp8`, `fractalyze-teacache` |
-| **Capability** | An abstract operation an implementation needs, defined by *what it allows*, independent of any engine. | `step_control`: observe each denoising step and decide whether to compute, reuse or replace the noise prediction |
-| **Seam** | Where and how a concrete target exposes a capability. Seams are private to EngineAdapters and Bindings; implementations never name them. | SGLang `DenoisingStage._run_denoising_step` (`denoising.py:1626`), reached by a `sglang.multimodal_gen.plugins` AROUND hook |
-| **EngineAdapter** | Knowledge common to one engine across all models: worker/process lifecycle, injection mechanism, request-local state, compile and graph-capture timing, the shared denoising loop, native feature configuration. | `SGLangAdapter` |
-| **ModelSpec** | Model-family *semantics* that hold in every engine: CFG semantics, timestep conventions, architecture family, token and stream semantics. No measured values. | `QwenImageSpec`: true CFG with norm-rescale; timestep scaled by 1/1000; dual-stream blocks |
-| **Binding** | Glue that exists only for one engine × model pair: where a logical component lives in that engine's implementation of the model, and the translation between native state and a capability's standard context. It sits between the other two and replaces neither. | `SGLangQwenBinding`: the trunk is `transformer_blocks` iterated at `qwen_image.py:2443` |
-| **Measurement history** (empirical knowledge) | What Core has measured: results keyed by model × technique × implementation × params × hardware × workload × gate. Thresholds, coefficients, sensitive layers and FP8-safe ranges are *observations* and live here. In V1 this is just Core's trace and frontier records, not a new type. | "`fractalyze-teacache` at threshold 0.08 on Qwen-Image passed the gate at 1.6x" |
+| SGLang's denoising loop and CFG handling | EngineAdapter | shared engine code for every model |
+| where per-request state lives in SGLang | EngineAdapter | an engine mechanism |
+| SGLang compiles at pipeline build and records graphs at warmup | EngineAdapter | the engine's lifecycle |
+| Qwen scales timesteps by 1/1000 and uses true CFG with rescaling | ModelSpec | true in the reference implementation too |
+| FLUX runs double-stream blocks, then single-stream blocks | ModelSpec | an architecture fact |
+| Qwen's trunk is the `transformer_blocks` loop in SGLang's model file | Binding | a location inside SGLang's version |
+| SGLang's FLUX.2 joins the streams once and its single blocks return one tensor | Binding | how *this engine* built that architecture |
+| TeaCache coefficients, good thresholds, sensitive layers | measurement history | fitted or measured |
+| graph capture is allowed for Qwen but not FLUX.2 | EngineAdapter | SGLang keeps the allowlist itself |
 
-### Capability vs seam
-
-The distinction is kept because the investigation shows the same capability
-being provided by different layers through different seams:
-
-- `step_control` is provided **engine-wide**. SGLang's denoising loop is shared
-  by Qwen and FLUX (`denoising.py:2037`), so `SGLangAdapter` provides it once.
-- `trunk_control` is provided **per model**. The trunk is a different loop in
-  each DiT (`qwen_image.py:2443`; `flux_2.py:1724-1760`), so each Binding
-  provides it.
-
-If implementations depended on seams directly, a generic implementation would
-be SGLang code. A vLLM-Omni or ComfyUI target would then have to be written
-from scratch rather than resolved. Seams also change across engine versions
-without the capability changing. One seam can serve several capabilities, and
-one capability can have alternative seams (`_run_denoising_step` or
-`_predict_noise_with_cfg`).
-
-## Ownership rule
-
-> Shared by many models within one engine → **EngineAdapter**.
-> True of the model in every engine → **ModelSpec**.
-> Only meaningful for one engine × model pair → **Binding**.
-> Measured rather than derived from architecture → **measurement history**.
-> When the engine itself already encodes a per-model fact (an allowlist, a
-> registry), the EngineAdapter *reads it from the engine* instead of copying it
-> into a Binding.
-
-Tested against the investigation:
-
-| Fact | Owner | Why |
-|---|---|---|
-| SGLang's denoising loop and CFG dispatch | EngineAdapter | `DenoisingStage` is shared engine code for every model |
-| Request-local state (`Req`, forward context, `ctx.extra`) | EngineAdapter | engine mechanism, model-independent |
-| torch.compile at pipeline build; graph capture at warmup | EngineAdapter | engine lifecycle (`denoising.py:380`, `runner.py:575`) |
-| Qwen: timestep / 1000, true CFG + norm-rescale | ModelSpec | holds in the reference implementation, not just SGLang's |
-| FLUX family: double-stream blocks then single-stream blocks | ModelSpec | architecture family fact |
-| Qwen's trunk = `transformer_blocks` loop at `qwen_image.py:2443` | Binding | a path inside SGLang's reimplementation |
-| FLUX.2 in SGLang: join once, single blocks return one tensor, lazy gated-residual tuples | Binding | how *this engine* realized that architecture |
-| TeaCache coefficients; sensitive layers; good thresholds | Measurement history | fitted or measured, depends on hardware, workload and gate |
-| Breakable CUDA graph allowed for Qwen but not FLUX.2 | EngineAdapter (reads `server_args.py:234`) | the engine owns the allowlist |
-
-Ambiguous cases, and how they are handled:
-
-- **Linear module discovery.** It is split. *Finding* linears is engine-wide:
-  every SGLang linear is a `LinearBase` with a `quant_method`
-  (`layers/linear.py:219`). *Which* linears form a logical group, and the
-  exceptions, are Binding facts. Qwen-Image-2.1 uses plain `nn.Linear` for
-  `img_in`/`proj_out`/modulation; FLUX.2 merges QKV and MLP into one GEMM.
-- **Block topology.** It is split. "FLUX has double then single blocks" is
-  ModelSpec. "In SGLang the single blocks run after `join_seqs` and return one
-  tensor" is Binding.
-- **Native feature availability per model.** Owned by EngineAdapter when the
-  engine encodes it (BCG allowlist, cache-dit's registry). It becomes a
-  Binding fact only if we discover availability the engine does not declare.
+**Cases that split across owners:**
+- **Finding linear layers.** "Every SGLang linear has a swappable
+  `quant_method`" is engine knowledge. "Qwen-Image-2.1 uses plain PyTorch
+  linears for a few layers, and FLUX.2 merges two projections into one" is
+  Binding knowledge.
+- **Block topology.** "FLUX has double then single blocks" is ModelSpec. "In
+  SGLang the single blocks run after a one-time join" is Binding.
 
 ## Implementation contract
 
-Each field is here because a concrete issue in the investigation needs it.
+Every field is here because a real problem in SGLang's code needs it.
 
-| Field | Meaning | Needed because |
+| Field | What it says | The problem it handles |
 |---|---|---|
-| `id`, `technique` | identity | the same technique has native and generic implementations (cache-dit vs ours) |
-| `kind` | `native` or `generic` | selection default and engagement evidence differ |
-| `params` | conceptual params (from the technique) plus implementation extras | TeaCache's threshold is conceptual; its rescale coefficients are implementation- and model-specific |
-| `requires` | set of capabilities, including `engine_feature.*` | resolution: decides feasibility per target |
-| `constraints` | lifecycle and execution needs, see [ADR 0009](adr/0009-lifecycle-constraints.md) | must precede compile; Python control flow is lost on graph replay; per-request state reset |
-| `owns` | exclusive resources | NVFP4 vs FP8 on `linear.quant`; TeaCache vs cache-dit vs Spectrum on `trunk.forward`; CFG gate vs CFG-parallel on `cfg.branch` |
-| `engaged(evidence)` | proof it actually ran | a no-op must not report a speedup (Sol's authenticity gate) |
+| `id`, `technique` | which technique this realizes | one technique can have a native and a generic implementation |
+| `kind` | native or generic | they are selected and verified differently |
+| `params` | the technique's conceptual parameters, plus its own extras | TeaCache's threshold is conceptual; its coefficients are model-specific |
+| `requires` | the capabilities it needs | decides whether it can run on a target at all |
+| `constraints` | when it must be installed and what it can survive (three flags, [ADR 0009](adr/0009-lifecycle-constraints.md)) | some changes must precede compilation; some decisions vanish under graph capture |
+| `owns` | resources it needs exclusively | FP8 and NVFP4 both want the linear layers; TeaCache and cache-dit both want the trunk |
+| `engaged()` | evidence that it really ran | an optimization that silently did nothing must not report a speedup |
 
-There is deliberately **no `supported_targets` field**. Support is the result
-of resolving `requires` against a target, so it is never hand-maintained.
+There is deliberately no list of supported targets. Resolution computes
+that, so nobody maintains it by hand.
 
-### Implementation selection
+### Choosing between implementations
 
-1. Resolve each implementation of the chosen technique against the target.
-   Drop those with unresolved requirements.
-2. Default order: a native implementation already **validated on this target**
-   in measurement history; then a generic implementation; then any unvalidated
-   native implementation; otherwise *unsupported*.
-3. The default is a starting point, not a rule. Where both a native and a
-   generic implementation resolve, the optimizer may measure both as separate
-   arms.
+1. Drop every implementation whose capabilities this target cannot provide.
+2. Default order:
+   1. a native implementation that has already **passed the quality gate on
+      this target**;
+   2. a generic implementation;
+   3. any other native implementation.
+3. Nothing left means the technique is unsupported on this target.
 
-Evidence for "validated native first": native cache-dit already handles its own
-ordering against compile (`denoising.py:544`). Evidence against making it a
-hard rule: native implementations can exist and silently do nothing. SGLang's
-TeaCache mixin exists on every `CachableDiT` but Qwen and FLUX never call it,
-and Spectrum under graph capture replays without its branch.
+This is a default, not a law. When both a native and a generic version
+resolve, the optimizer can measure both.
 
-## Capability resolution examples
+## Three techniques, resolved
 
-### Step skip
+| | Step skip | TeaCache | FP8 linear |
+|---|---|---|---|
+| **Implementation** | `fractalyze-step-skip` (generic) | `fractalyze-teacache` (generic) | `sglang-native-fp8` (native) |
+| **Needs** | step control, timestep, request state | timestep, request state, trunk control, signal tap | the engine's FP8 feature |
+| **Provided by** | SGLangAdapter only | SGLangAdapter + per-model Binding | SGLangAdapter only |
+| **Model-specific code** | none | where the trunk and signal are | none |
+| **Installed** | per request; no reload | trunk wrapper before compile; state per request | at server launch |
+| **Decides** | every step, outside the transformer | every step, inside the transformer | never (static) |
+| **Constraints** | `request_state` | `mutates_model`, `dynamic_in_forward`, `request_state` | `mutates_model` |
+| **Exclusive resource** | the step's prediction | the trunk | the linear layers |
+| **Graph capture** | expected safe (unverified) | refused | handled by the engine |
+| **How we check it ran** | count skipped steps | count reused trunk calls | count FP8 layers in the live model |
 
-```
-fractalyze-step-skip (generic)
-  requires: step_control, timestep_state, request_local_state
-  resolution: all three → SGLangAdapter (shared denoising loop, DenoisingStepState, Req)
-  Binding: none.  ModelSpec: none.
-  constraints: request_state   (mutates_model: no · dynamic_in_forward: no)
-  owns: step.prediction
-```
-
-- **Install:** request init. No reload, so configs that differ only in step
-  skip can share one running server.
-- **Runtime:** per step, outside the DiT call.
-- **Compile:** unaffected, because the loop is outside the compiled module.
-- **Graph capture:** expected to be safe. Graphs are replayed per DiT call
-  (`denoising.py:2500`, `runner.py:300`), so skipping a step skips a replay.
-  Unverified; see experiment 1.
-
-### TeaCache
-
-```
-fractalyze-teacache (generic)
-  requires: timestep_state, request_local_state   → SGLangAdapter
-            trunk_control, signal_tap            → SGLangQwenBinding / SGLangFlux2Binding
-  consults: ModelSpec (timestep convention; CFG semantics → per-branch state)
-  params:   threshold, warmup (conceptual); coefficients (from measurement history)
-  constraints: mutates_model (wraps the trunk), dynamic_in_forward, request_state
-  owns: trunk.forward
-```
-
-- **Install:** the trunk wrapper goes in before compile. State is reset at
-  request init.
-- **Runtime:** per step, *inside* the DiT. Its control flow is therefore not
-  replayable under graph capture, and it is **rejected when graph capture is
-  on**.
-- **Compile:** its host sync forces a graph break. Whether it survives
-  torch.compile is open (experiment 2).
-- **Conflicts:** cache-dit, Spectrum, and any other owner of `trunk.forward`.
-
-### FP8 linear
-
-```
-sglang-native-fp8 (native)
-  requires: engine_feature.fp8_linear → SGLangAdapter (--quantization fp8)
-  Binding: none.  Generic seams: none.
-  constraints: mutates_model (decided at module construction)
-  owns: linear.quant
-```
-
-- **Install:** at launch and construction, so a different FP8 setting means a
-  different server.
-- **Runtime:** static.
-- **Engagement:** count the live `quant_method`s that are FP8.
-- **Compile:** the engine orders it before compile itself.
-
-The decomposition is natural for the native case. It gets *unnatural* as soon
-as we want **selective** FP8, meaning some layers kept dense. That needs a
-generic implementation requiring `linear_access`, which in turn needs a Binding
-for logical groups and exceptions. This is evidence that `linear_access` must
-stay a resolvable capability, not just an engine flag.
+The decomposition is natural for all three. It gets harder the moment we
+want *selective* FP8, keeping some layers in full precision. That needs a
+generic implementation with `linear_access`, which needs a Binding to name
+the layer groups. This is why `linear_access` stays a capability rather than
+just an engine flag.
 
 ## Capabilities in V1
 
-| Capability | Status | Provided by (SGLang) | Seam (SGLang) |
+| Capability | Status | In SGLang, provided by | …at this seam |
 |---|---|---|---|
 | `step_control` | common | SGLangAdapter | `_run_denoising_step` (`denoising.py:1626`) |
-| `timestep_state` | common | SGLangAdapter | `DenoisingStepState`; forward context `current_timestep` |
-| `request_local_state` | common | SGLangAdapter | `Req`, `ctx.extra`, `Req.is_cfg_negative` for the branch |
-| `trunk_control` | common (per Binding) | Binding | the block loop(s) in each DiT forward |
-| `signal_tap` | common (per Binding) | Binding | e.g. first block's modulation |
-| `engine_feature.*` | per engine | SGLangAdapter | launch args, env, request sampling params |
-| `compile_control` | per engine | SGLangAdapter | `--enable-torch-compile`, `--enable-breakable-cuda-graph` |
-| `block_access` | **optional** | Binding (if it can) | target-specific block list and signature; no universal signature |
-| `linear_access` | **optional** | SGLangAdapter + Binding | `LinearBase.quant_method` + Binding's logical groups |
-| `attention_access` | **optional** | SGLangAdapter | backend selector (`selector.py:171`) |
+| `timestep_state` | common | SGLangAdapter | step state; forward context |
+| `request_local_state` | common | SGLangAdapter | the request object; which CFG branch is running |
+| `trunk_control` | common, per Binding | Binding | the block loop(s) in each model's forward |
+| `signal_tap` | common, per Binding | Binding | e.g. the first block's modulation |
+| `engine_feature.*` | per engine | SGLangAdapter | launch flags, environment, per-request switches |
+| `compile_control` | per engine | SGLangAdapter | compile and graph-capture flags |
+| `block_access` | **optional** | Binding, if it can | the target's own block list and signature |
+| `linear_access` | **optional** | SGLangAdapter + Binding | swappable `quant_method` + named layer groups |
+| `attention_access` | **optional** | SGLangAdapter | attention backend selector |
 
-"Optional" means a target may decline to provide it, and implementations that
-require it are then unsupported on that target. It does not mean the concept
-is rejected.
+"Optional" means a target may not provide it, in which case implementations
+that need it are unsupported there. It does not mean the idea was rejected.
+Block-level access in particular is expected to be needed later, for
+selective block caching, block skipping and per-block precision. It just has
+no shared signature across models.
 
-## Changes made now (backed by the investigation)
+## What is settled, what is open
 
-- The **capability layer** is restored: implementations depend on capabilities;
-  seams are private to targets.
-- **Binding is glue** between EngineAdapter and ModelSpec, and replaces
-  neither.
-- An explicit **ownership rule**, including the cases where knowledge is
-  split.
-- **Block-level access is optional and target-specific.** It is not rejected.
-- **Empirical knowledge** moves out of ModelSpec into measurement history.
-- **Lifecycle:** SGLang's phases are SGLang-specific and stay inside
-  `SGLangAdapter`. Implementations declare constraints instead
-  ([ADR 0009](adr/0009-lifecycle-constraints.md)).
-- **Step-seam policies** are expected to be compatible with graph capture.
-  Only in-DiT policies are excluded.
+**Settled by the investigation** (decisions and rejected alternatives are in
+the ADRs):
+- Implementations depend on capabilities, never on seams.
+  [ADR 0008](adr/0008-capability-layer.md)
+- EngineAdapter, ModelSpec and Binding are separate.
+  [ADR 0008](adr/0008-capability-layer.md)
+- Measured values live in measurement history, not in ModelSpec.
+  [ADR 0008](adr/0008-capability-layer.md)
+- Implementations declare three constraints; SGLang's lifecycle stages stay
+  inside SGLangAdapter. [ADR 0009](adr/0009-lifecycle-constraints.md)
+- Block access is optional and target-specific, not rejected.
+  [ADR 0010](adr/0010-v1-capabilities-and-first-techniques.md)
 
-## Open questions requiring experiments
-
-These are deliberately not answered here.
-
+**Open until an experiment answers it:**
 - Does `step_control` map cleanly onto vLLM-Omni's and ComfyUI's denoising
   loops?
-- Can one generic TeaCache implementation serve both Qwen-Image and FLUX.2
-  through their Bindings?
-- Does a Binding-provided trunk wrapper survive torch.compile, and at what
-  graph-break cost?
-- Are step-seam policies really safe under breakable CUDA graph replay?
-- Does linear replacement need a Binding in practice, or does
-  `LinearBase.quant_method` suffice for both models?
-- What capability set does ComfyUI need, given that its unit of execution is a
-  node graph?
+- Can one generic TeaCache serve both Qwen-Image and FLUX.2 through their
+  Bindings?
+- Does a trunk wrapper survive torch.compile, and at what cost?
+- Are decisions in the denoising loop really safe under graph capture?
+- Does linear replacement need a Binding in practice?
+- What capabilities does ComfyUI need, given that it executes node graphs?
 
-## Not generalized yet, on purpose
+The experiments that test these are listed, cheapest-to-falsify first, in the
+[investigation](architecture-investigation.md#open-items).
 
-- **Lifecycle.** No cross-engine lifecycle model. Implementations carry three
-  constraint flags; only `SGLangAdapter` maps them to phases.
-- **Blocks.** No universal block signature and no block-level technique in
-  V1. `block_access` is a named, optional capability so it can be added later.
-- **vLLM-Omni and ComfyUI.** No adapter interfaces are defined beyond "provides
-  capabilities through seams". Their capability coverage is an experiment,
-  not an assumption.
+**Deliberately not generalized yet:**
+- **Lifecycle.** There is no cross-engine lifecycle model, only three
+  constraint flags that each adapter maps onto its own lifecycle.
+- **Blocks.** There is no universal block signature, and V1 has no
+  block-level technique.
+- **vLLM-Omni and ComfyUI.** No adapter exists beyond the rule "provide
+  capabilities through seams". How many capabilities they can provide is an
+  experiment, not an assumption.

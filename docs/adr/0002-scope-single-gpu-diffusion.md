@@ -1,28 +1,35 @@
-# ADR 0002: Scope: image diffusion on one GPU first, extensible later
+# ADR 0002: Start with image diffusion on one GPU
 
 Status: accepted · 2026-10-01
 
+## In short
+
+Version 1 optimizes text-to-image diffusion (Qwen-Image and FLUX) on a single
+GPU. Multi-GPU, video and non-diffusion workloads are kept *possible* but not
+built.
+
 ## Context
 
-The first workloads worth optimizing are text-to-image diffusion models served
-on a single GPU. The structure still has to extend later to multi-GPU and to
-other workloads.
+The first workloads worth optimizing are text-to-image diffusion models
+served on one GPU. The structure still has to grow later to multi-GPU and to
+other kinds of models.
 
 ## Decision
 
-- **V1 targets:** Qwen-Image and FLUX text-to-image, batch 1, on one GPU.
-- **Extension points kept open, not built:** multi-GPU topology (Sol's
-  `06_parallel_topology`), video models, and non-diffusion workloads. In
-  practice no Core type may assume "image", "one GPU", or "denoising loop" in a
-  way that would have to be removed later. Those assumptions belong in the
-  diffusion-specific adapters.
+- **V1 targets:** Qwen-Image and FLUX text-to-image, batch size 1, one GPU.
+- **Kept open, not built:** multi-GPU topology (Sol's parallel-topology
+  family), video models, non-diffusion workloads.
+- **The rule that keeps them open:** nothing in Core may assume "image",
+  "one GPU" or "denoising loop" in a way that would have to be torn out
+  later. Those assumptions belong in the diffusion-specific adapters.
 
 ## Consequences
 
-- The quality gate can be image-based (LPIPS/SSIM over a prompt set) in V1.
-- Topology search is out of scope for V1.
+- The V1 quality gate can be image-based: perceptual distance over a fixed
+  prompt set.
+- Searching multi-GPU layouts is out of scope for V1.
 
 ## Deferred
 
-- Multi-GPU topology search. Revisit once a single-GPU line has shipped end
-  to end.
+- **Multi-GPU topology search.** *Revisit once* one single-GPU line has
+  shipped end to end.
