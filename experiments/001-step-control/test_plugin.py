@@ -47,6 +47,26 @@ def test_bypass_skips_the_whole_step(tmp_path, monkeypatch):
     assert calls == [0, 1, 3, 4] and len(used) == 4
 
 
+def test_each_step_reports_its_graph_replays(tmp_path, monkeypatch):
+    log = tmp_path / "probe.jsonl"
+    control = tmp_path / "control.json"
+    control.write_text("{}")
+    monkeypatch.setenv("OPT_PROBE_CONTROL", str(control))
+    monkeypatch.setenv("OPT_PROBE_LOG", str(log))
+    batch = SimpleNamespace(request_id="r", extra={})
+    ctx = SimpleNamespace(is_warmup=False, timesteps=[0, 1, 2], num_inference_steps=3, scheduler=None)
+
+    def step_fn(self, ctx, step, batch, server_args):
+        if step.step_index > 0:  # mirrors Qwen-Image-2.1: an eager prefill, then graph replays
+            plugin._around_replay(lambda runner: None, None)
+
+    for i in range(3):
+        plugin._around_step(step_fn, None, ctx, SimpleNamespace(step_index=i, t_host=float(i)), batch,
+                            SimpleNamespace(model_path="m"))
+    records = [json.loads(line) for line in log.read_text().splitlines()]
+    assert [r["graph_replays_this_step"] for r in records] == [0, 1, 1]
+
+
 def test_unlisted_request_is_only_observed(tmp_path, monkeypatch):
     monkeypatch.setenv("OPT_PROBE_CONTROL", str(tmp_path / "missing.json"))
     assert plugin._policy("anything") == {"mode": "observe"}

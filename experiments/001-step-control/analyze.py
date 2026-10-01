@@ -54,6 +54,7 @@ def main():
             steps = [e for e in by_rid.get(row["request_id"], []) if e.get("event") == "step"]
             ran = [e for e in steps if e.get("action") == "ran"]
             calls = sum(e.get("model_calls_this_step", 0) for e in ran)
+            replays = sum(e.get("graph_replays_this_step", 0) for e in ran)
             # The flow-match scheduler picks its sigma interval from its own
             # counter, not from the timestep it is handed, so the counter must
             # equal the loop's index on entry (None before its first update).
@@ -64,7 +65,7 @@ def main():
             walls.setdefault(row["name"], []).append(row["wall_s"])
             n_ts = steps[0]["total_steps"] if steps else "-"
             print(f"  {row['request_id']:<16} mode={row['mode']:<8} k={row['k']!s:<4} "
-                  f"steps_seen={len(steps):>3} ran={len(ran):>3} model_calls={calls:>3} "
+                  f"steps_seen={len(steps):>3} ran={len(ran):>3} model_calls={calls:>3} graph_replays={replays:>3} "
                   f"len(timesteps)={n_ts!s:>3} desync_at={desync[:3] or '-'} "
                   f"sched_removed={[s['removed'] for s in sched] or '-'} "
                   f"wall={row['wall_s']:.2f}s  vs_ref={cmp}")
