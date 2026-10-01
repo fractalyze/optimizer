@@ -1,6 +1,6 @@
 # ADR 0007: V1 seams and the first three techniques
 
-Status: accepted · 2026-10-01
+Status: superseded by [ADR 0010](0010-v1-capabilities-and-first-techniques.md) on 2026-10-01 · originally accepted 2026-10-01
 Evidence: [architecture investigation](../architecture-investigation.md), parts 2, 3, 7 and 10.
 
 ## Decision: V1 seams

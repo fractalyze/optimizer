@@ -1,6 +1,6 @@
 # ADR 0005: Technique → Implementation → Target (engine × model) binding
 
-Status: accepted · 2026-10-01
+Status: superseded by [ADR 0008](0008-capability-layer.md) on 2026-10-01 · originally accepted 2026-10-01
 Evidence: [architecture investigation](../architecture-investigation.md), parts 4, 5 and 8.
 
 ## Context

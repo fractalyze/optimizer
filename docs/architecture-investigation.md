@@ -5,10 +5,15 @@ Status: current · last substantive update 2026-10-01
 Scope: this is an evidence report. It reads the real Qwen-Image and FLUX code
 in SGLang diffusion and tests one hypothesis: optimization techniques can be
 separated from their implementations, and those implementations can plug into
-models and engines through a small set of standard seams. The decisions drawn
-from it are recorded in [ADR 0005](adr/0005-target-binding-architecture.md),
-[ADR 0006](adr/0006-lifecycle-phases.md) and
-[ADR 0007](adr/0007-v1-seams-and-first-techniques.md).
+models and engines through a small set of standard seams.
+
+> **Revised 2026-10-01.** The evidence in Parts 1–7 stands. The conclusions
+> first drawn from it, the TL;DR's "Revised shape" and Parts 8–10, were
+> recorded in ADRs 0005–0007. Those conclusions have been refined into
+> [architecture](architecture.md) and ADRs
+> [0008](adr/0008-capability-layer.md), [0009](adr/0009-lifecycle-constraints.md)
+> and [0010](adr/0010-v1-capabilities-and-first-techniques.md). The original
+> text is kept below for the record, with dated notes where it changed.
 
 **Source pinned:** upstream `sgl-project/sglang` main at `8ca82118e`
 (2026-09-24). Paths below are relative to
@@ -48,6 +53,9 @@ commit. The trace was done by reading code only; nothing was executed on a GPU.
   The binding provides a few **seams** (launch, load, request, step, trunk),
   and composition is checked through **resource ownership** plus
   **lifecycle phase** plus **graph-mode compatibility**.
+  *CHANGED 2026-10-01:* a capability layer now sits between implementations
+  and targets, and Binding is glue between EngineAdapter and ModelSpec rather
+  than a replacement for them. See [architecture](architecture.md).
 
 ---
 
@@ -184,7 +192,7 @@ FLUX.1 and FLUX.2.
 | **TeaCache** | Skip the trunk when an accumulated, rescaled rel-L1 of the timestep-modulated input stays under a threshold | `cache/teacache.py`, `TeaCacheMixin` in `CachableDiT` | **no / no / no** (Wan, Hunyuan, LingBot only) | request init | per step | step + **trunk** + a model-specific "modulated input" signal | **partially.** The controller is generic; the signal tap and the rescale coefficients are per model. | `.item()` host sync breaks graphs (`teacache.py:196`) | excludes Spectrum (`sampling_params.py:720`); no guard against breakable CUDA graphs |
 | **Block cache (DBCache / FBCache)** | Reuse the residual of block `n..N` when the first-`n`-block residual barely changes | cache-dit (`cache_dit_integration.py:496`) | yes / yes / yes | request init, **before compile** | per step, per block | per-block adapter (cache-dit owns it) | **prefer native.** cache-dit already ships per-model forward patterns. | compile deferred until mounted (`denoising.py:544,612`) | refused under breakable CUDA graphs (`:1025`); FSDP; DMD vs TaylorSeer |
 | **DPCache** (schedule-searched cache) | — | **not in this commit** (open upstream PR sgl-project/sglang#40848) | — | — | — | — | — | — | — |
-| **Step skip / fixed-step reuse** | Reuse or extrapolate the noise prediction on chosen steps | Spectrum (F1 only); cache-dit SCM step masks | no / yes / no; SCM: yes / yes / yes | request | per step | **step only** | **yes, fully.** The noise prediction is an opaque tensor. | needs eager control flow; breaks under breakable CUDA graphs | Spectrum vs TeaCache |
+| **Step skip / fixed-step reuse** | Reuse or extrapolate the noise prediction on chosen steps | Spectrum (F1 only); cache-dit SCM step masks | no / yes / no; SCM: yes / yes / yes | request | per step | **step only** | **yes, fully.** The noise prediction is an opaque tensor. | needs eager control flow; breaks under breakable CUDA graphs. *CHANGED 2026-10-01: true only for in-DiT skipping (Spectrum, `flux.py:1446`). A step-seam implementation skips the DiT call, and graphs are replayed per call (`denoising.py:2500`, `breakable_cuda_graph/runner.py:300`), so it is expected to be capture-safe. Unverified.* | Spectrum vs TeaCache |
 | **Timestep reduction** | Fewer steps or a different sigma schedule | `num_inference_steps`; `scheduler_class_override` | yes / yes / yes | request | request | request (schedule) | yes | changes shapes for nothing; changes graph count for nothing | invalidates per-step schedules of other caches |
 | **CFG skip / gate** | Reuse `uncond = cond − cached delta` after step `k` | CFG gate (`denoising.py:1483-1530`) | Q only meaningful (FLUX.1-dev and klein have no true CFG) | request | per step | step (branch dimension) | yes | eager tensor math | disabled with CFG-parallel (`:1498`) |
 | **Block skipping** | Drop blocks entirely | SD3 `skip_layers` only | no / no / no | — | per step | trunk + block description | needs model block description | — | quality-sensitive |
@@ -350,6 +358,15 @@ Worked combination: **NVFP4 + QKV fusion + torch.compile + TeaCache + step skip*
 
 ## Part 8: revised architecture
 
+> *Superseded 2026-10-01 for Parts 8–10 by [architecture](architecture.md).*
+> Notable corrections:
+> - Implementations depend on capabilities, not on seams.
+> - Block access is an optional, target-specific capability, not a rejected
+>   abstraction.
+> - Measured values (sensitive layers, coefficients) belong in measurement
+>   history, not in ModelSpec.
+> - SGLang's lifecycle phases are SGLang-specific.
+
 ```mermaid
 flowchart TB
     subgraph Agent["Agent / search layer"]
@@ -494,14 +511,32 @@ See [ADR 0005](adr/0005-target-binding-architecture.md) and
 
 ## Open items
 
-- [ ] Verify at runtime that a plugin registered under
-      `sglang.multimodal_gen.plugins` runs in the worker and can wrap
-      `DenoisingStage._run_denoising_step` (the first Core/engine spike).
-- [ ] Check whether FLUX.2 klein's layer count and FLUX.2 forward kwargs
-      differ from FLUX.2-dev in the loaded checkpoint config (unverified,
-      from config only).
-- [ ] Confirm whether the online `--quantization fp8` path runs fused FP8 GEMMs
-      on the target GPU architecture for both models, or falls back.
-- [ ] Decide whether to vendor the FLUX.1 path at all. FLUX.2-klein is the
-      target, and FLUX.1 differs (Spectrum is wired there, a distilled
-      guidance embedding, per-block join).
+Runtime experiments, ordered so that the cheapest one that could *falsify* the
+architecture runs first. Each one names the claim it can break.
+
+- [ ] **1. Step control is engine-wide and capture-safe.** One plugin
+      (`sglang.multimodal_gen.plugins`) wraps `_run_denoising_step` and skips
+      the DiT on chosen steps. Run the *same* code on Qwen-Image and
+      FLUX.2-klein, then on Qwen-Image with breakable CUDA graphs on.
+      - Falsified if either model needs model-specific code to skip a step.
+      - Falsified if graph replay misbehaves when calls are skipped.
+- [ ] **2. Trunk control resolves per Binding and survives compile.**
+      Implement `trunk_control` for both models with reuse disabled, and
+      require OFF-identity (bit-exact against the unwrapped model) in eager
+      and under torch.compile.
+      - Falsified if the wrapper cannot be identical in eager mode.
+      - Falsified if compile breaks it beyond an acceptable graph-break count.
+- [ ] **3. Capabilities are not SGLang-shaped.** By code reading only, map
+      `step_control`, `trunk_control` and `request_local_state` onto
+      vLLM-Omni's and ComfyUI's Qwen-Image/FLUX paths.
+      - Falsified if a capability cannot be expressed without SGLang concepts.
+- [ ] **4. A native implementation is configuration plus an engagement check.**
+      Launch native FP8 on both models and count the live FP8 `quant_method`s.
+      - Falsified if model-specific glue is needed, e.g. Qwen-Image-2.1's
+        plain `nn.Linear`.
+- [ ] Check whether FLUX.2 klein's layer count and forward kwargs differ from
+      FLUX.2-dev in the loaded checkpoint config (unverified, read from config
+      only).
+- [ ] Decide whether to support FLUX.1 at all. FLUX.2-klein is the target,
+      and FLUX.1 differs: Spectrum is wired there, it uses a distilled guidance
+      embedding, and its blocks join per block.

@@ -1,6 +1,6 @@
 # ADR 0006: Lifecycle phases follow the engine's compile and capture points
 
-Status: accepted · 2026-10-01
+Status: superseded by [ADR 0009](0009-lifecycle-constraints.md) on 2026-10-01 · originally accepted 2026-10-01
 Evidence: [architecture investigation](../architecture-investigation.md), part 6.
 
 ## Context
