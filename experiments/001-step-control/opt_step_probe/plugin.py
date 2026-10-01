@@ -28,7 +28,14 @@ _TIMESTEPS = (
     "sglang.multimodal_gen.runtime.pipelines_core.stages.timestep_preparation."
     "TimestepPreparationStage.forward"
 )
+_BCG_REPLAY = (
+    "sglang.multimodal_gen.runtime.breakable_cuda_graph.runner."
+    "BaseBreakableCudaGraphRunner.replay"
+)
 _KEY = "opt_probe"  # this probe's slot in the request's own `extra` dict
+# SGLang logs a graph-signature miss only once and never counts replays, so the
+# probe counts them itself to show whether a step actually ran from a graph.
+_replays = [0]
 
 
 def _policy(request_id):
@@ -77,10 +84,11 @@ def _around_step(original, self, ctx, step, batch, server_args):
         record["action"] = "bypassed"
         _log(record)
         return None
-    calls_before = state["model_calls"]
+    calls_before, replays_before = state["model_calls"], _replays[0]
     result = original(self, ctx, step, batch, server_args)
     record["action"] = "ran"
     record["model_calls_this_step"] = state["model_calls"] - calls_before
+    record["graph_replays_this_step"] = _replays[0] - replays_before
     _log(record)
     return result
 
@@ -113,10 +121,16 @@ def _around_timesteps(original, self, batch, server_args):
     return original(self, batch, server_args)
 
 
+def _around_replay(original, self, *args, **kwargs):
+    _replays[0] += 1
+    return original(self, *args, **kwargs)
+
+
 def register():
     from sglang.multimodal_gen.runtime.platforms.plugins import HookType, plugin_hook
 
     plugin_hook(f"{_DENOISING}._run_denoising_step", HookType.AROUND)(_around_step)
     plugin_hook(f"{_DENOISING}._predict_noise_with_cfg", HookType.AROUND)(_around_predict)
     plugin_hook(_TIMESTEPS, HookType.AROUND)(_around_timesteps)
+    plugin_hook(_BCG_REPLAY, HookType.AROUND)(_around_replay)
     _log(dict(event="registered"))
