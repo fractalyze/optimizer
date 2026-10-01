@@ -12,7 +12,8 @@ The claim that it is *one* capability does not:
 
 - **Observing** steps and **replacing a step's prediction** are engine-wide and
   safe. Observation is bitwise identical to running without the plugin, in
-  eager and under torch.compile, and adds no recompiles or graph breaks.
+  eager, under torch.compile and under graph replay, and adds no recompiles or
+  graph breaks.
 - **Skipping a whole step** is not a valid operation. The flow-match scheduler
   keeps its own step counter, so a skipped step silently shifts every later
   sigma by one (FLUX: 25.9 dB vs 39 dB for the correct alternatives).
@@ -23,9 +24,10 @@ So `step_control` is split into `step_observe`, `step_prediction_override` and
 `step_schedule_mutate`, all provided by the EngineAdapter
 ([ADR 0011](../../docs/adr/0011-split-step-control.md)).
 
-Not answered here: whether step control survives **graph capture**. FLUX.2 is
-not on SGLang's breakable-CUDA-graph allowlist, and the Qwen graph runs were
-dropped (see [Scope](#scope)).
+All three survive **graph capture** on Qwen-Image-2.1: with breakable CUDA
+graphs on, every step after the first replayed from a graph, and every request
+was bitwise identical to the same request run eager. FLUX.2 cannot be tested
+this way; SGLang does not offer graph capture for it.
 
 ## What was tested
 
@@ -70,16 +72,27 @@ image on one RTX 5090, median of the observe repeats.
 | torch.compile | 17.58 s | identical | 49 calls · 36.9 dB | — | — | identical |
 | BCG requested | 17.8 s (ran eager) | identical | 49 calls · 39.2 dB | — | — | identical |
 
+FLUX.2 is not on SGLang's graph-capture allowlist, so the "BCG requested" row
+ran eager (finding 6).
+
 The eager baseline matches the
 [frontier benchmark's](https://frontier.fractalyze.io/flux-2-klein-4b/rtx5090)
 `sglang-native` baseline (17.79 s, 19.9 GB peak VRAM; ours 20.0 GB) for the same
 protocol settings, measured there on a different SGLang commit and prompt set.
 
-**Qwen-Image-2.1** · 40 steps · CFG 1.0 · 1024² · K = 20 · eager only
+**Qwen-Image-2.1** · 40 steps · CFG 1.0 · 1024² · K = 20
 
-| Baseline | observe | override | bypass | schedule | after-control |
-|---|---|---|---|---|---|
-| 13.62 s | identical · 13.77 s | 39 calls · 46.7 dB | 39 calls · **desync** · 31.2 dB | 39 steps · 46.7 dB | identical |
+| Engine mode | Baseline | observe | override | bypass | schedule | after-control |
+|---|---|---|---|---|---|---|
+| eager | 13.62 s | identical · 13.77 s | 39 calls · 46.7 dB | 39 calls · **desync** · 31.2 dB | 39 steps · 46.7 dB | identical |
+| breakable CUDA graphs | 13.61 s | identical · 13.62 s · 39 replays | 39 calls · 38 replays · 49.2 dB | — | 39 steps · 38 replays · 48.8 dB | identical |
+
+The graph-mode rows use the prompt `"warmup"` (finding 7). Every request in that
+row is also **bitwise identical to the same request run eager**, so replaying a
+graph changes nothing about what the probe sees or does. The first step of
+every request is Qwen-Image-2.1's prefill, which SGLang always runs eager; the
+other steps replay. Graph replay brings no speedup at this size (13.61 s vs
+13.64 s eager on the same prompt).
 
 ### Properties
 
@@ -92,7 +105,7 @@ protocol settings, measured there on a different SGLang commit and prompt set.
 | bypass is safe | ❌ | scheduler desyncs from step K+1 on both models |
 | schedule mutation works | ✅, with scheduler knowledge | sigmas must be rebuilt before the loop |
 | survives torch.compile | ✅ | 21 recompiles and 134 graph breaks, with or without the plugin |
-| survives graph capture | **not tested** | FLUX.2 falls back to eager; Qwen graph runs dropped |
+| survives graph capture | ✅ (Qwen-Image-2.1) | 38–39 replays per request; every request bitwise identical to eager |
 
 ## Findings
 
@@ -116,6 +129,13 @@ protocol settings, measured there on a different SGLang commit and prompt set.
 6. **A refused graph mode is a warning, not an error.** Asking for BCG on
    FLUX.2 logs a warning, sets the flag back to false and runs eager. An
    adapter must read the settings the engine actually applied.
+7. **Qwen-Image-2.1's graphs replay only at the warmup prompt's exact length.**
+   Its stage turns off the text-length buckets other models use, and SGLang
+   always warms up with the one-word prompt `"warmup"`;
+   `warmup_sampling_params` does not change it. Any other prompt length misses
+   the graph and runs eager, and SGLang reports the miss only once per process.
+   So "graph capture is on" says nothing about whether a request used it: the
+   probe counts replays itself, and Core will need the same evidence.
 
 <details>
 <summary>Code locations at SGLang 8ca82118e</summary>
@@ -130,8 +150,13 @@ All paths under `python/sglang/multimodal_gen/runtime/`.
 - per-request `extra` dict: `pipelines_core/schedule_batch.py:200`
 - silent plugin load failure: `platforms/plugins.py:174`
 - BCG allowlist warning: `server_args/server_args.py:789`
+- fixed warmup prompt: `warmup_request_builder.py:47`, used at `:620`
+- Qwen-Image-2.1 disables text-length padding: `pipelines_core/stages/model_specific_stages/qwen_image21.py:237`
+- graph replay (counted by the probe): `breakable_cuda_graph/runner.py:407`; one-shot miss log `:320`
 - Qwen-Image-2.1 uses `QwenImage21DenoisingStage`, which overrides only
-  `_predict_noise`; FLUX.2-klein-base uses the base `DenoisingStage`.
+  `_predict_noise` (eager prefill) and `_bcg_pad_prompt_kwargs` (no text
+  buckets), neither of which the probe touches; FLUX.2-klein-base uses the base
+  `DenoisingStage`.
 
 </details>
 
@@ -140,10 +165,9 @@ All paths under `python/sglang/multimodal_gen/runtime/`.
 - **Models.** ADR 0010 names Qwen-Image and FLUX.2-klein. This experiment used
   Qwen-Image-2.1 (`790c926`) and FLUX.2-klein-base-4B (`a3b4f48`). The original
   Qwen-Image does not fit in the 32 GB card.
-- **Qwen ran eager only.** Partway through, the decision was made to focus on
-  FLUX, so Qwen's compile and BCG configurations were not run.
-- **Graph capture is still open.** It needs a model on the BCG allowlist with
-  graph capture actually on, e.g. Qwen-Image-2.1.
+- **Qwen has no torch.compile run.** Partway through, the decision was made to
+  focus on FLUX; Qwen's graph-capture runs were added afterwards to settle that
+  one open question.
 - **One prompt, one seed.** This experiment tests mechanics, not quality.
   Quality is measured later, against a gate.
 
@@ -160,7 +184,9 @@ python run.py --model black-forest-labs/FLUX.2-klein-base-4B --out runs/flux-eag
     --server-kwarg performance_mode=manual --server-kwarg 'warmup_resolutions=["1024x1024"]'
 # same, plugin disabled, as the reference
 python run.py ... --out runs/flux-eager-noplugin --plan plans/flux-baseline.json --no-plugin
-# add --server-kwarg enable_torch_compile=true or enable_breakable_cuda_graph=true for the other modes
+# add --server-kwarg enable_torch_compile=true for compile; for graph capture on
+# Qwen-Image-2.1 use plans/qwen-bcg*.json (prompt "warmup") with
+# --server-kwarg enable_breakable_cuda_graph=true
 
 python analyze.py runs/flux-eager-noplugin/images/observe-0.png runs/flux-eager-*
 ```

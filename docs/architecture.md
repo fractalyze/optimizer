@@ -213,7 +213,7 @@ resolve, the optimizer can measure both.
 | **Decides** | every step, outside the transformer | every step, inside the transformer | never (static) |
 | **Constraints** | `request_state` | `mutates_model`, `dynamic_in_forward`, `request_state` | `mutates_model` |
 | **Exclusive resource** | the step's prediction | the trunk | the linear layers |
-| **Graph capture** | expected safe (unverified; [exp 001](../experiments/001-step-control/README.md) could not test it) | refused | handled by the engine |
+| **Graph capture** | safe (verified on Qwen-Image-2.1, [exp 001](../experiments/001-step-control/README.md)) | refused | handled by the engine |
 | **How we check it ran** | count skipped steps | count reused trunk calls | count FP8 layers in the live model |
 
 The decomposition is natural for all three. It gets harder the moment we
@@ -261,7 +261,7 @@ the ADRs):
   [ADR 0010](adr/0010-v1-capabilities-and-first-techniques.md)
 - Step control needs no Binding, and is three capabilities: observe, override
   a prediction, mutate the schedule. Skipping a whole step is not offered,
-  because it desyncs the scheduler.
+  because it desyncs the scheduler. All three survive graph capture.
   [ADR 0011](adr/0011-split-step-control.md),
   [experiment 001](../experiments/001-step-control/README.md)
 
@@ -271,9 +271,6 @@ the ADRs):
 - Can one generic TeaCache serve both Qwen-Image and FLUX.2 through their
   Bindings?
 - Does a trunk wrapper survive torch.compile, and at what cost?
-- Are decisions in the denoising loop really safe under graph capture?
-  (Experiment 001 could not test it: FLUX.2 is not on SGLang's graph-capture
-  allowlist.)
 - Does linear replacement need a Binding in practice?
 - What capabilities does ComfyUI need, given that it executes node graphs?
 
