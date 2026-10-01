@@ -1,0 +1,26 @@
+{
+ "defaults": {
+  "prompt": "A neon shop sign that reads \"QWEN IMAGE 2.1\", rainy night, reflections on wet pavement",
+  "height": 1024,
+  "width": 1024,
+  "num_inference_steps": 40,
+  "guidance_scale": 1.0,
+  "seed": 42
+ },
+ "requests": [
+  {
+   "name": "observe",
+   "mode": "observe",
+   "repeat": 2
+  },
+  {
+   "name": "override",
+   "mode": "override",
+   "k": 20
+  },
+  {
+   "name": "after-control",
+   "mode": "observe"
+  }
+ ]
+}
