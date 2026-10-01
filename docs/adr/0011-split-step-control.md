@@ -56,10 +56,14 @@ output when used naively is not one we should expose.
   log line. `engaged()` must rest on what the worker actually reported.
 - An adapter must read the graph and compile settings the engine *applied*.
   SGLang turns a refused graph mode into a warning and runs eager.
-- **Still open:** whether these capabilities survive graph capture. FLUX.2 is
-  not on SGLang's graph-capture allowlist, and the Qwen graph runs were not
-  done. Until that is measured, step skip's "Graph capture" entry stays
-  unverified.
+- The three capabilities survive graph capture: on Qwen-Image-2.1 with
+  breakable CUDA graphs, steps replayed from graphs and every request was
+  bitwise identical to eager. This holds because all three act outside the
+  DiT call, which is the unit SGLang records.
+- "Graph capture on" does not mean a request used it. Qwen-Image-2.1 replays
+  only at the warmup prompt's exact length and otherwise runs eager, reported
+  once per process. `engaged()` for anything that relies on graph replay must
+  count replays, not read the flag.
 
 ## Alternatives rejected
 

@@ -383,12 +383,15 @@ architecture runs first. Each one names the claim it can break.
         the same plugin worked on both models with no model-specific code,
         but skipping a whole step desyncs the scheduler, so step control was
         split ([ADR 0011](adr/0011-split-step-control.md)).
-- [ ] **1b. Step capabilities are capture-safe.** Not tested by experiment
-      001: FLUX.2 is not on SGLang's graph-capture allowlist (it falls back to
-      eager with a warning), and the Qwen-Image-2.1 graph runs were not done.
-      Run `step_observe` and `step_prediction_override` on Qwen-Image-2.1
-      with breakable CUDA graphs on.
+- [x] **1b. Step capabilities are capture-safe.** Run `step_observe`,
+      `step_prediction_override` and `step_schedule_mutate` on Qwen-Image-2.1
+      with breakable CUDA graphs on. (FLUX.2 cannot be used: it is not on
+      SGLang's graph-capture allowlist and falls back to eager.)
       - Falsified if graph replay misbehaves when a prediction is overridden.
+      - **Done** ([experiment 001](../experiments/001-step-control/README.md)):
+        steps replayed from graphs and every request was bitwise identical to
+        eager. Graphs replay only at the warmup prompt's exact length, so
+        replays have to be counted, not assumed.
 - [ ] **2. Trunk control resolves per Binding and survives compile.**
       Implement `trunk_control` for both models with reuse disabled, and
       require OFF-identity (bit-exact against the unwrapped model) in eager
