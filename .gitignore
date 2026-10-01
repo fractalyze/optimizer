@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+.venv*/
+# Run bundles, renders, logs: never committed.
+runs/
+outputs/
