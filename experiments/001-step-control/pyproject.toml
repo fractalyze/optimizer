@@ -1,0 +1,15 @@
+[project]
+name = "opt-step-probe"
+version = "0.0.0"
+description = "SPIKE: experiment 001 probe. Observes and controls SGLang denoising steps. Not production code."
+requires-python = ">=3.10"
+
+[project.entry-points."sglang.multimodal_gen.plugins"]
+opt_step_probe = "opt_step_probe.plugin:register"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["opt_step_probe"]

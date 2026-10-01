@@ -1,0 +1,27 @@
+{
+ "defaults": {
+  "prompt": "A neon shop sign that reads \"FLUX KLEIN\", rainy night, reflections on wet pavement",
+  "height": 1024,
+  "width": 1024,
+  "num_inference_steps": 50,
+  "guidance_scale": 4.0,
+  "negative_prompt": "",
+  "seed": 42
+ },
+ "requests": [
+  {
+   "name": "observe",
+   "mode": "observe",
+   "repeat": 2
+  },
+  {
+   "name": "override",
+   "mode": "override",
+   "k": 25
+  },
+  {
+   "name": "after-control",
+   "mode": "observe"
+  }
+ ]
+}

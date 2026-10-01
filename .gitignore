@@ -1,6 +1,8 @@
 __pycache__/
 *.pyc
+*.egg-info/
 .venv*/
 # Run bundles, renders, logs: never committed.
 runs/
 outputs/
+inputs/
