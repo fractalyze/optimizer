@@ -1,24 +1,31 @@
-# ADR 0004: Build incrementally; test interfaces, not internals
+# ADR 0004: Build one agreed piece at a time; test interfaces
 
 Status: accepted · 2026-10-01
 
+## In short
+
+Components land one at a time, each after its interface is agreed. Tests
+protect the contracts other code relies on, not internals.
+
 ## Context
 
-Every component should be understood by its reviewers as it lands, not review a large
-finished framework.
+Every component should be understood by its reviewers as it lands, rather
+than reviewed as a large finished framework.
 
 ## Decision
 
-- Components are built one at a time, in this order: profile schema, engine
-  adapter, measurement, gate, and so on. Each one is agreed in discussion
-  before it is implemented.
-- Tests cover the **contracts that other code relies on**: the engine adapter
-  interface, the technique/implementation interface, the composition and
-  conflict rules, and the gate verdicts. Internals are not unit-tested for
-  their own sake.
+- **Order of work:** one component at a time, e.g. config schema, then
+  engine adapter, then measurement, then quality gate. Each is agreed in
+  discussion before it is written.
+- **What gets tested:** the contracts other code depends on:
+  - the engine adapter interface;
+  - the technique and implementation contract;
+  - composition and conflict rules;
+  - quality-gate verdicts.
+- **What doesn't:** internals, tested for their own sake.
 
 ## Consequences
 
-- Fewer tests, so each one has to protect a boundary that would otherwise
-  break silently.
-- Design notes go in `docs/` as decisions are made, not after.
+- Fewer tests, so each one must guard a boundary that would otherwise break
+  silently.
+- Design notes go into `docs/` as decisions are made, not afterwards.

@@ -2,49 +2,53 @@
 
 Status: accepted · 2026-10-01
 
-## Context
+## In short
 
-We want an optimizer in the style of [Sol-Engine](../sol-engine.md). It should
-take a diffusion serving setup and return faster configurations that pass a
-quality gate. Sol-Engine publishes its *contract* (manifests, gates, technique
-policies) but not its *loop* (evaluation, orchestration, adapters). Our
-earlier diffusion-optimization work showed that measurement and gating are where
-the expensive mistakes happen.
-
-## Decision
-
-Build three layers. Each layer depends only on the layer below it.
+The system is split into three layers. **Core** measures and judges. The
+**Technique** layer holds optimizations. The **Agent** layer proposes and
+writes optimizations. An agent can never report a speedup that Core did not
+measure and gate.
 
 ```mermaid
 flowchart TB
-    A["<b>Agent layer</b><br/>orchestrator + per-technique executor agents<br/>(Claude Code skills / briefs)"]
-    T["<b>Technique layer</b><br/>techniques and their swappable implementations"]
-    C["<b>Core layer</b><br/>manifest/profile schema · engine launch · measurement ·<br/>quality gates · frontier/trace · tiering · audit"]
-    A -->|proposes configs, writes implementations| T
+    A["<b>Agent</b><br/>proposes configs, writes implementations"]
+    T["<b>Technique</b><br/>techniques and their swappable implementations"]
+    C["<b>Core</b><br/>launch · measure · quality gates · results"]
+    A -->|chooses and writes| T
     T -->|runs through| C
     A -->|reads results from| C
 ```
 
-- **Core** is written by us, one piece at a time. That includes the profile
+## Context
+
+We want an optimizer in the style of [Sol-Engine](../sol-engine.md): give it
+a served model, get back faster configurations that still pass a quality
+gate. Sol-Engine publishes its *contract* (config files, gates, technique
+policies) but not its *loop* (evaluation, orchestration, model adapters). And
+earlier diffusion-optimization work showed that measurement and gating are
+where the expensive mistakes happen.
+
+## Decision
+
+- **Core** is written by us, one piece at a time, including the config
   schema and the evaluation. We do not copy Sol's harness wholesale.
-- **Technique** is designed around an abstraction that makes implementations
-  easy to add and swap. Its shape is decided by evidence; see
-  [the seam investigation](../architecture-investigation.md).
+- **Technique** is built around an abstraction that makes implementations
+  easy to add and swap. Its shape comes from evidence; see the
+  [architecture](../architecture.md).
 - **Agent** comes last and is designed in discussion. Agents add and tune
-  techniques; they do not bypass Core's gates.
+  techniques, but they never bypass Core's gates.
 
 ## Consequences
 
-- Speedup claims always go through Core's measurement and gates. An agent
-  cannot report a number Core did not produce.
-- Agents can be swapped or improved without touching how results are judged.
-- More upfront work than wrapping Sol's scripts.
+- Every speedup claim goes through Core's measurement and gates.
+- Agents can change or improve without changing how results are judged.
+- More work up front than wrapping Sol's scripts.
 
-## Rejected
+## Alternatives rejected
 
-- **Fork Sol-Engine and fill in its stubs.** Its adapters are in an
-  unpublished SGLang fork, and its manifests assume video and SLURM. Revisit if
-  NVIDIA publishes the loop and runtime fork.
-- **A purely programmatic search (grid/Bayesian) with no agent.** It can only
-  tune knobs that already exist. Most of the gains in earlier work came
-  from new fusions and shims, which needed code to be written.
+- **Fork Sol-Engine and fill in its missing parts.** Its model adapters are
+  in an unpublished SGLang fork, and its configs assume video and a SLURM
+  cluster. *Revisit if* NVIDIA publishes the loop and the runtime fork.
+- **A purely programmatic search (grid or Bayesian), no agent.** It can only
+  tune switches that already exist. In earlier work most of the gains came
+  from new fused kernels and integration code, which had to be written.

@@ -1,6 +1,13 @@
 # ADR 0007: V1 seams and the first three techniques
 
-Status: superseded by [ADR 0010](0010-v1-capabilities-and-first-techniques.md) on 2026-10-01 · originally accepted 2026-10-01
+Status: **superseded** by [ADR 0010](0010-v1-capabilities-and-first-techniques.md) on 2026-10-01 · originally accepted 2026-10-01
+
+> **Read [ADR 0010](0010-v1-capabilities-and-first-techniques.md) instead.** This ADR listed V1 *seams*, and its wording rejected block-level access outright. The evidence only shows that a *universal* per-block signature is not justified. The original text is kept below,
+> unchanged, so the history of the design stays visible.
+
+<details>
+<summary>Original text</summary>
+
 Evidence: [architecture investigation](../architecture-investigation.md), parts 2, 3, 7 and 10.
 
 ## Decision: V1 seams
@@ -47,3 +54,5 @@ Models: Qwen-Image and FLUX.2-klein. FLUX.1 is deferred.
 - **NVFP4.** Revisit after FP8 proves native-as-configuration and the
   engagement check.
 - **FLUX.1.** Revisit if a benchmark target needs it.
+
+</details>

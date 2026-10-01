@@ -16,8 +16,8 @@ Claude Code-specific rules for this repo:
   setup (GPU indices, locks, local checkouts) in committed files.
 
 ## Reference sources (read-only)
-- SGLang: upstream `sgl-project/sglang` @ `8ca82118e`. Cite file:line at that
-  commit. Re-pin explicitly; do not drift to a fork.
+- SGLang: the upstream commit pinned in `docs/adr/0003-sglang-first-engine.md`.
+  Cite file:line at that commit; moving the pin means amending that ADR.
 - Sol-Engine: `NVlabs/Sana`, branch `sol-engine`, @ `670482d`.
 
 ## Git

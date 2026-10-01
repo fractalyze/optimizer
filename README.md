@@ -12,27 +12,22 @@ time, in the order the ADRs set.
 
 ```mermaid
 flowchart LR
-    Agent["Agent layer<br/>propose · implement"] --> Tech["Technique layer<br/>technique → implementation"]
-    Tech --> Target["Target<br/>engine adapter × model binding"]
-    Target --> Core["Core<br/>launch · measure · gate · frontier"]
+    Agent["Agent<br/>proposes · implements"] --> Tech["Technique → Implementation<br/>declares needed capabilities"]
+    Tech --> Target["Target<br/>EngineAdapter · ModelSpec · Binding<br/>provide the capabilities"]
+    Target --> Core["Core<br/>launch · measure · gate"]
     Core -->|results| Agent
 ```
 
 ## Layout
 
-    docs/                       design docs and decision records (start here)
-    docs/adr/NNNN-*.md          one accepted decision per file
+    docs/architecture.md        the current design (start here)
+    docs/adr/                   decision records, one decision per file
 
 ## Docs
 
-- [Architecture](docs/architecture.md) — the current design: concepts, where knowledge belongs, and how a technique resolves onto a runtime
-- [Sol-Engine](docs/sol-engine.md) — what the system we're modeled on does, and which parts of it are not public
-- [Architecture investigation](docs/architecture-investigation.md) — how Qwen-Image and FLUX actually run in SGLang (the evidence), and the falsification experiments to run next
-- [ADR 0001: Three layers](docs/adr/0001-three-layer-architecture.md) — why Core / Technique / Agent, and what each owns
-- [ADR 0002: Scope](docs/adr/0002-scope-single-gpu-diffusion.md) — why one-GPU image diffusion first, and what is kept open
-- [ADR 0003: SGLang first](docs/adr/0003-sglang-first-engine.md) — why SGLang, and the rule that keeps vLLM-Omni/ComfyUI addable
-- [ADR 0004: Incremental build](docs/adr/0004-incremental-build-interface-tests.md) — how we build (one agreed piece at a time) and what gets tested
-- [ADR 0008: Capability layer](docs/adr/0008-capability-layer.md) — why implementations depend on capabilities, and why EngineAdapter, ModelSpec and Binding are three separate things
-- [ADR 0009: Lifecycle constraints](docs/adr/0009-lifecycle-constraints.md) — why implementations declare constraints instead of naming SGLang's phases
-- [ADR 0010: V1 capabilities and first techniques](docs/adr/0010-v1-capabilities-and-first-techniques.md) — which capabilities are common or optional, and the three validation techniques
-- Superseded, kept for history: [ADR 0005](docs/adr/0005-target-binding-architecture.md) (target binding), [ADR 0006](docs/adr/0006-lifecycle-phases.md) (SGLang phases), [ADR 0007](docs/adr/0007-v1-seams-and-first-techniques.md) (V1 seams)
+Start with **Architecture**; the rest explains where it came from.
+
+- [Architecture](docs/architecture.md) — the current design: what each concept means, where knowledge belongs, and how a technique gets onto a running engine
+- [Decision records](docs/adr/README.md) — why each part is shaped the way it is, what was rejected, and what was superseded
+- [Investigation: Qwen-Image and FLUX in SGLang](docs/architecture-investigation.md) — the evidence from SGLang's code, and the experiments that could still prove the design wrong
+- [Sol-Engine](docs/sol-engine.md) — the NVIDIA system this project is modeled on, and which parts of it are not public

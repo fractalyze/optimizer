@@ -4,6 +4,18 @@ Status: current · last substantive update 2026-10-01
 Scope: what NVIDIA's Sol-Engine is, how its optimization loop works, and which
 parts of it are public. Read this before an ADR that says "like Sol".
 
+## In short
+
+- Sol-Engine is NVIDIA's framework for speeding up video diffusion models,
+  reporting 2-3x.
+- A coding agent does the optimizing. One agent per technique family
+  searches its own options. An integrator combines the winners. A quality
+  judge (a person, or a vision model) decides what is acceptable.
+- NVIDIA published the *rules*: config format, quality gates, technique
+  catalog. It did not publish the *machinery*: the evaluation loop, the
+  orchestration, the model adapters. That machinery is what this project
+  builds.
+
 ## What it is
 
 Sol-Engine lives on the `sol-engine` branch of
