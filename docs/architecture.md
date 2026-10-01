@@ -5,7 +5,8 @@ Status: current · last substantive update 2026-10-01
 This is the current design, and the place where its terms are defined. Why
 each part is shaped this way is in the ADRs
 ([0008](adr/0008-capability-layer.md), [0009](adr/0009-lifecycle-constraints.md),
-[0010](adr/0010-v1-capabilities-and-first-techniques.md)). The evidence from
+[0010](adr/0010-v1-capabilities-and-first-techniques.md),
+[0011](adr/0011-split-step-control.md)). The evidence from
 SGLang's code is in the [investigation](architecture-investigation.md).
 
 ## In short
@@ -31,7 +32,7 @@ flowchart TB
     OPT["<b>Optimizer</b><br/>chooses techniques + conceptual params"]
     TEC["<b>Technique</b><br/>what: concept + conceptual param schema"]
     IMP["<b>Implementation</b><br/>how: requires · constraints · owns · engaged()"]
-    CAP["<b>Capability API</b><br/>step_control · timestep_state · request_local_state ·<br/>trunk_control · signal_tap · compile_control · engine_feature.*<br/>optional: block_access · linear_access · attention_access"]
+    CAP["<b>Capability API</b><br/>step_observe · step_prediction_override · step_schedule_mutate ·<br/>timestep_state · request_local_state · trunk_control · signal_tap · compile_control · engine_feature.*<br/>optional: block_access · linear_access · attention_access"]
     RES["<b>Capability resolution</b><br/>which layer provides each requirement, through which seam"]
     subgraph TGT["Target = one engine × one model"]
         EA["<b>EngineAdapter</b><br/>how this engine works<br/>e.g. SGLangAdapter"]
@@ -80,7 +81,8 @@ Follow **TeaCache on Qwen-Image in SGLang** from top to bottom:
 6. **Core** measures speed and quality, checks that TeaCache really skipped
    steps, and records the result. The optimizer uses it to pick the next try.
 
-Step skip, by contrast, needs only the step and request state. It resolves
+Step skip, by contrast, needs only to observe steps, override a step's
+prediction, and keep request state. It resolves
 entirely in SGLangAdapter and never touches a Binding. That difference is the
 point of resolution.
 
@@ -101,9 +103,9 @@ cache-dit's block cache is not "TeaCache".
 Both kinds follow the same [contract](#implementation-contract).
 
 **Capability.** An abstract operation an implementation needs, described by
-what it lets you do and not by where it lives. Example: `step_control` means
-"observe each denoising step and decide whether to compute, reuse or replace
-the prediction".
+what it lets you do and not by where it lives. Example:
+`step_prediction_override` means "return your own prediction for a denoising
+step instead of calling the model".
 
 **Seam.** The concrete place where one target provides a capability.
 Example: SGLang's `DenoisingStage._run_denoising_step`, reached through a
@@ -204,14 +206,14 @@ resolve, the optimizer can measure both.
 | | Step skip | TeaCache | FP8 linear |
 |---|---|---|---|
 | **Implementation** | `fractalyze-step-skip` (generic) | `fractalyze-teacache` (generic) | `sglang-native-fp8` (native) |
-| **Needs** | step control, timestep, request state | timestep, request state, trunk control, signal tap | the engine's FP8 feature |
+| **Needs** | step observe, step prediction override, request state | timestep, request state, trunk control, signal tap | the engine's FP8 feature |
 | **Provided by** | SGLangAdapter only | SGLangAdapter + per-model Binding | SGLangAdapter only |
 | **Model-specific code** | none | where the trunk and signal are | none |
 | **Installed** | per request; no reload | trunk wrapper before compile; state per request | at server launch |
 | **Decides** | every step, outside the transformer | every step, inside the transformer | never (static) |
 | **Constraints** | `request_state` | `mutates_model`, `dynamic_in_forward`, `request_state` | `mutates_model` |
 | **Exclusive resource** | the step's prediction | the trunk | the linear layers |
-| **Graph capture** | expected safe (unverified) | refused | handled by the engine |
+| **Graph capture** | expected safe (unverified; [exp 001](../experiments/001-step-control/README.md) could not test it) | refused | handled by the engine |
 | **How we check it ran** | count skipped steps | count reused trunk calls | count FP8 layers in the live model |
 
 The decomposition is natural for all three. It gets harder the moment we
@@ -224,7 +226,9 @@ just an engine flag.
 
 | Capability | Status | In SGLang, provided by | …at this seam |
 |---|---|---|---|
-| `step_control` | common | SGLangAdapter | `_run_denoising_step` (`denoising.py:1626`) |
+| `step_observe` | common | SGLangAdapter | `_run_denoising_step` (`denoising.py:1626`) |
+| `step_prediction_override` | common | SGLangAdapter | `_predict_noise_with_cfg` (`denoising.py:2195`) |
+| `step_schedule_mutate` | common | SGLangAdapter | `TimestepPreparationStage.forward` (`timestep_preparation.py:78`) |
 | `timestep_state` | common | SGLangAdapter | step state; forward context |
 | `request_local_state` | common | SGLangAdapter | the request object; which CFG branch is running |
 | `trunk_control` | common, per Binding | Binding | the block loop(s) in each model's forward |
@@ -255,14 +259,21 @@ the ADRs):
   inside SGLangAdapter. [ADR 0009](adr/0009-lifecycle-constraints.md)
 - Block access is optional and target-specific, not rejected.
   [ADR 0010](adr/0010-v1-capabilities-and-first-techniques.md)
+- Step control needs no Binding, and is three capabilities: observe, override
+  a prediction, mutate the schedule. Skipping a whole step is not offered,
+  because it desyncs the scheduler.
+  [ADR 0011](adr/0011-split-step-control.md),
+  [experiment 001](../experiments/001-step-control/README.md)
 
 **Open until an experiment answers it:**
-- Does `step_control` map cleanly onto vLLM-Omni's and ComfyUI's denoising
-  loops?
+- Do the step capabilities map cleanly onto vLLM-Omni's and ComfyUI's
+  denoising loops?
 - Can one generic TeaCache serve both Qwen-Image and FLUX.2 through their
   Bindings?
 - Does a trunk wrapper survive torch.compile, and at what cost?
 - Are decisions in the denoising loop really safe under graph capture?
+  (Experiment 001 could not test it: FLUX.2 is not on SGLang's graph-capture
+  allowlist.)
 - Does linear replacement need a Binding in practice?
 - What capabilities does ComfyUI need, given that it executes node graphs?
 

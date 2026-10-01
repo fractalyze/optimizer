@@ -1,6 +1,7 @@
 # ADR 0010: V1 capabilities, optional block access, first three techniques
 
 Status: accepted · 2026-10-01 · supersedes [ADR 0007](0007-v1-seams-and-first-techniques.md)
+· step control amended by [ADR 0011](0011-split-step-control.md)
 
 ## In short
 
