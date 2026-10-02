@@ -352,7 +352,7 @@ Every conflict below is real, and each is caught by one field of the
 | Conflict found in SGLang | Caught by |
 |---|---|
 | FP8 and NVFP4 both want the same linear layers; TeaCache, Spectrum and cache-dit all want the trunk; the CFG gate and parallel CFG both want the guidance branch | `owns` |
-| cache-dit, quality kernels and per-request attention swaps are refused under graph capture; TeaCache and Spectrum silently do nothing under it | `constraints` (`dynamic_in_forward`) and the target's graph mode |
+| cache-dit, quality kernels and per-request attention swaps are refused under graph capture; TeaCache and Spectrum silently do nothing under it | execution requirements (`runs_every_invocation`), interpreted by the adapter against the applied graph mode ([ADR 0013](adr/0013-feasibility-and-engagement.md)) |
 | replacing modules after the pipeline is built runs uncompiled or needs a reload | `constraints` (`mutates_model`) |
 | TeaCache and Spectrum keep state on the module and reset it at step 0 | `constraints` (`request_state`) |
 | graph capture is not allowed for FLUX.2; progressive resolution refuses sequence parallelism; CFG techniques need true CFG, which FLUX.1-dev lacks | `requires` (resolution fails) |

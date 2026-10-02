@@ -8,8 +8,8 @@ result, not something to patch around.
 
 Capabilities consumed:
   timestep_state       call.step_index, call.num_steps
-  execution_local_state  `state`, a dict owned by one execution item (in SGLang:
-                       one request x one CFG branch)
+  request_local_state  `state`, a dict owned by one logical execution owner
+                       (in SGLang: one request x one CFG branch)
   trunk_observe        on_enter / on_exit are called once per trunk invocation
   trunk_output_override  on_enter may return a payload to use instead of
                        running the trunk; on_exit may replace the result

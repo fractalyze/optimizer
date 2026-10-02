@@ -34,8 +34,8 @@ history of the design is visible.
 | [0006](0006-lifecycle-phases.md) | Lifecycle phases follow SGLang's compile and capture points | superseded by 0009 |
 | [0007](0007-v1-seams-and-first-techniques.md) | V1 seams and the first three techniques | superseded by 0010 |
 | [0008](0008-capability-layer.md) | Implementations depend on capabilities; EngineAdapter, ModelSpec and Binding are separate | accepted |
-| [0009](0009-lifecycle-constraints.md) | Implementations declare lifecycle constraints; engine stages stay in the adapter | accepted; `dynamic_in_forward` superseded by 0013 |
+| [0009](0009-lifecycle-constraints.md) | Implementations declare lifecycle constraints; engine stages stay in the adapter | accepted; engine mapping of `dynamic_in_forward` amended by 0013 |
 | [0010](0010-v1-capabilities-and-first-techniques.md) | V1 capabilities, optional block access, first three techniques | accepted; step control amended by 0011, trunk control by 0012 |
 | [0011](0011-split-step-control.md) | Split step control into observe, prediction override and schedule mutation | accepted |
 | [0012](0012-trunk-capabilities.md) | Trunk control is three capabilities, defined at the trunk's edges | accepted |
-| [0013](0013-feasibility-and-engagement.md) | An implementation must be feasible in the current execution mode, and a result counts only if it engaged | accepted |
+| [0013](0013-feasibility-and-engagement.md) | Execution feasibility and engagement verification are stages every implementation passes | accepted |

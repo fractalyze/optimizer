@@ -1,7 +1,8 @@
 # ADR 0009: Implementations declare constraints; engine lifecycles stay in the adapter
 
 Status: accepted · 2026-10-01 · supersedes [ADR 0006](0006-lifecycle-phases.md)
-· `dynamic_in_forward` superseded by [ADR 0013](0013-feasibility-and-engagement.md)
+· the engine mapping of `dynamic_in_forward` amended by [ADR 0013](0013-feasibility-and-engagement.md):
+  the flag stays; what it means in each execution mode is the adapter's call
 
 ## In short
 

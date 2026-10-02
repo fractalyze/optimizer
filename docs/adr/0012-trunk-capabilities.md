@@ -10,9 +10,10 @@ model difference inside a small per-model Binding. That works, so the Binding
 stays, and it must stay small. ADR 0010's `trunk_control` and `signal_tap`
 become `trunk_observe`, `trunk_output_override` and `signal_observe`, defined
 only at the trunk's two edges, where both models carry image tokens in and
-image tokens out. `request_local_state` becomes `execution_local_state`,
-because its owner is not always a whole request. When these capabilities can
-actually be used, and how a run proves it used them, is
+image tokens out. `request_local_state` keeps its name but means isolation
+between logical execution owners, which here is a request × a CFG branch; its
+final ownership model is open. When these capabilities can actually be used,
+and how a run proves it used them, is
 [ADR 0013](0013-feasibility-and-engagement.md).
 
 ## Context
@@ -34,12 +35,12 @@ probe, an identity override and a one-step reuse through the same code.
 
 ### Capabilities
 
-| Capability | Kind ([ADR 0013](0013-feasibility-and-engagement.md)) | Lets an implementation… | Provided by |
-|---|---|---|---|
-| `trunk_observe` | observe | see every trunk invocation, on entry and on exit | EngineAdapter (mechanics) + Binding (where the edges are) |
-| `trunk_output_override` | decide | on entry, supply a payload instead of running the trunk; on exit, replace the result. A call may be declared not overridable, and the implementation must accept that | EngineAdapter + Binding |
-| `signal_observe` | observe | read the model's cache signal for this call | Binding |
-| `execution_local_state` (was `request_local_state`) | — | keep state owned by one logical execution item, never shared across items, gone when the item ends | EngineAdapter |
+| Capability | Lets an implementation… | Provided by |
+|---|---|---|
+| `trunk_observe` | see every trunk invocation, on entry and on exit | EngineAdapter (mechanics) + Binding (where the edges are) |
+| `trunk_output_override` | on entry, supply a payload instead of running the trunk; on exit, replace the result. A call may be declared not overridable, and the implementation must accept that | EngineAdapter + Binding |
+| `signal_observe` | read the model's cache signal for this call | Binding |
+| `request_local_state` | keep state isolated per logical execution owner, never shared across owners, gone when the owner ends | EngineAdapter |
 
 - **Payloads are made below the contract.** The adapter packs a trunk result as
   `output` or `residual` (exit − entry) and re-applies it to a later call's
@@ -48,10 +49,12 @@ probe, an identity override and a one-step reuse through the same code.
   (relative L1 here) is the technique's choice, and a Binding should not know
   which technique is running. Its current shape, one opaque tensor per call,
   is **provisional**: see Open.
-- **The execution item is the adapter's call.** For a step-level capability in
-  SGLang it is one request; for a trunk-level one it is one request × one CFG
-  branch. The name drops "request" because ComfyUI has no request (one sampling
-  run plays that role) and because one request may hold several items.
+- **The owner of `request_local_state` is the adapter's call.** For a
+  step-level capability in SGLang it is one request; for a trunk-level one it is
+  one request × one CFG branch, because FLUX.2 needs a payload per branch. The
+  name stays: other engines may need request × batch slice × branch, or have no
+  request at all (ComfyUI's sampling run), and renaming before a second
+  execution model has been run would guess at the final shape.
 
 ### What a Binding may contain
 
@@ -66,9 +69,11 @@ and what is true only here". In experiment 002 that was, per model:
 - which calls may not be overridden (Qwen-Image-2.1's first call fills the
   prefix cache, so it must always run).
 
-A Binding must **not** contain: worker or request lifecycle, generic request or
-branch state, payload arithmetic, compile or graph-capture policy, engagement
-counting, or anything a second model in the same engine would repeat. If a
+A Binding must **not** contain: generic worker or request lifecycle, generic
+request or branch state, payload arithmetic, compile policy, CUDA graph policy,
+benchmarking logic, generic engagement logic, or anything a second model in the
+same engine would repeat. Compile or graph behavior enters a Binding only if
+evidence shows it is genuinely model-specific; so far none has. If a
 Binding starts growing those, it is becoming a god object, and the code belongs
 in the EngineAdapter. The probe kept to this: its payload forms were first
 written in the Binding file and were moved to the adapter when the rule was
@@ -109,11 +114,16 @@ written down, with no change in behavior.
 
 **Open:**
 
-- **One model call that serves several execution items.** ComfyUI runs cond and
+- **One model call that serves several logical owners.** ComfyUI runs cond and
   uncond in one call; vLLM-Omni batches requests. Override, payload and signal
-  would then act per batch slice. Whether `signal_observe` must return a
-  structured view that says which slice belongs to which item is unresolved, so
-  the single-tensor shape is not yet a permanent contract.
+  would then act per batch slice. Does `signal_observe` then need logical
+  ownership metadata, i.e. signal plus which slice belongs to which owner,
+  rather than a plain tensor? Can `trunk_output_override` act on selected slices
+  only? Until a batched runtime experiment answers this, the raw-tensor shape is
+  kept and is not a permanent contract.
+- **The final ownership model of `request_local_state`:** request × branch is
+  what SGLang needed; request × batch slice × branch, or no request at all, are
+  untested.
 - Whether one payload form keeps serving models whose trunk exit is not a
   single image stream.
 
