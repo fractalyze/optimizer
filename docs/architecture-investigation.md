@@ -392,23 +392,44 @@ architecture runs first. Each one names the claim it can break.
         steps replayed from graphs and every request was bitwise identical to
         eager. Graphs replay only at the warmup prompt's exact length, so
         replays have to be counted, not assumed.
-- [ ] **2. Trunk control resolves per Binding and survives compile.**
-      Implement `trunk_control` for both models with reuse disabled, and
+- [x] **2. Trunk control resolves per Binding and survives compile.**
+      Implement trunk control for both models with reuse disabled, and
       require OFF-identity (bit-exact against the unwrapped model) in eager
       and under torch.compile.
       - Falsified if the wrapper cannot be identical in eager mode.
       - Falsified if compile breaks it beyond an acceptable graph-break count.
-- [ ] **3. Capabilities are not SGLang-shaped.** By code reading only, map
-      the step capabilities, `trunk_control` and `request_local_state` onto
+      - **Done** ([experiment 002](../experiments/002-trunk-control/README.md)):
+        identical in eager and under regional compile, with one generic
+        implementation and two small Bindings. Whole-model compile triples the
+        graph breaks and, on FLUX.2, an identity override changes the image;
+        graph replay never runs the hooks. Recorded in
+        [ADR 0012](adr/0012-trunk-capabilities.md).
+- [ ] **2b. Trunk capabilities work when one model call serves several
+      requests or CFG branches.** ComfyUI batches cond and uncond into one
+      call and vLLM-Omni batches requests, so override and signal would act
+      per batch slice. SGLang ran one request and one branch per call in
+      experiment 002.
+      - Falsified if a per-slice override cannot be expressed without the
+        implementation knowing the batch layout.
+- [x] **3. Capabilities are not SGLang-shaped.** By code reading only, map
+      the step capabilities, trunk control and `request_local_state` onto
       vLLM-Omni's and ComfyUI's Qwen-Image/FLUX paths.
       - Falsified if a capability cannot be expressed without SGLang concepts.
+      - **Done** (experiment 002,
+        [portability check](../experiments/002-trunk-control/README.md#portability-sanity-check-code-reading-only)):
+        every capability has a plausible boundary in both engines, and
+        vLLM-Omni's own TeaCache already uses per-model extractors that play the
+        Binding's role. Two contract gaps remain: batched calls (item 2b) and
+        ComfyUI having no request, only a sampling run.
 - [ ] **4. A native implementation is configuration plus an engagement check.**
       Launch native FP8 on both models and count the live FP8 `quant_method`s.
       - Falsified if model-specific glue is needed, e.g. Qwen-Image-2.1's
         plain `nn.Linear`.
-- [ ] Check whether FLUX.2 klein's layer count and forward kwargs differ from
-      FLUX.2-dev in the loaded checkpoint config (unverified, read from config
-      only).
+- [x] Check whether FLUX.2 klein's layer count and forward kwargs differ from
+      FLUX.2-dev in the loaded checkpoint config. FLUX.2-klein-base-4B has 5
+      double-stream and 20 single-stream blocks, and loads as SGLang's
+      `Flux2Transformer2DModel`, the class FLUX.2's other checkpoints use; its
+      forward kwargs were not compared with FLUX.2-dev's (experiment 002).
 - [ ] Decide whether to support FLUX.1 at all. FLUX.2-klein is the target,
       and FLUX.1 differs: Spectrum is wired there, it uses a distilled guidance
       embedding, and its blocks join per block.

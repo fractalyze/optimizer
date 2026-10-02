@@ -6,7 +6,8 @@ This is the current design, and the place where its terms are defined. Why
 each part is shaped this way is in the ADRs
 ([0008](adr/0008-capability-layer.md), [0009](adr/0009-lifecycle-constraints.md),
 [0010](adr/0010-v1-capabilities-and-first-techniques.md),
-[0011](adr/0011-split-step-control.md)). The evidence from
+[0011](adr/0011-split-step-control.md),
+[0012](adr/0012-trunk-capabilities.md)). The evidence from
 SGLang's code is in the [investigation](architecture-investigation.md).
 
 ## In short
@@ -32,7 +33,7 @@ flowchart TB
     OPT["<b>Optimizer</b><br/>chooses techniques + conceptual params"]
     TEC["<b>Technique</b><br/>what: concept + conceptual param schema"]
     IMP["<b>Implementation</b><br/>how: requires · constraints · owns · engaged()"]
-    CAP["<b>Capability API</b><br/>step_observe · step_prediction_override · step_schedule_mutate ·<br/>timestep_state · request_local_state · trunk_control · signal_tap · compile_control · engine_feature.*<br/>optional: block_access · linear_access · attention_access"]
+    CAP["<b>Capability API</b><br/>step_observe · step_prediction_override · step_schedule_mutate ·<br/>timestep_state · request_local_state · trunk_observe · trunk_output_override ·<br/>signal_observe · compile_control · engine_feature.*<br/>optional: block_access · linear_access · attention_access"]
     RES["<b>Capability resolution</b><br/>which layer provides each requirement, through which seam"]
     subgraph TGT["Target = one engine × one model"]
         EA["<b>EngineAdapter</b><br/>how this engine works<br/>e.g. SGLangAdapter"]
@@ -63,14 +64,15 @@ Follow **TeaCache on Qwen-Image in SGLang** from top to bottom:
 2. The implementation `fractalyze-teacache` says it needs four capabilities:
    - the current step and timestep;
    - somewhere to keep state for this request;
-   - a way to run or replay the transformer trunk;
+   - a way to observe the transformer trunk and replace its result;
    - a cheap signal that predicts whether the trunk's output will change.
 3. **Resolution** finds who provides each one:
    - The step, timestep and request state are the same for every model in
      SGLang, so **SGLangAdapter** provides them.
    - The trunk and the signal live in different places in every model, so
      **SGLangQwenBinding** provides them. It knows that Qwen's trunk is the
-     `transformer_blocks` loop, and that the signal is the first block's
+     `transformer_blocks` loop, that its first call fills a prefix cache and
+     must always run, and that the signal is the first block's
      modulation.
    - **QwenImageSpec** contributes what is true of Qwen in any engine: it
      uses true CFG, so TeaCache keeps separate state per CFG branch.
@@ -159,6 +161,7 @@ The rule, tested on real cases:
 | Qwen scales timesteps by 1/1000 and uses true CFG with rescaling | ModelSpec | true in the reference implementation too |
 | FLUX runs double-stream blocks, then single-stream blocks | ModelSpec | an architecture fact |
 | Qwen's trunk is the `transformer_blocks` loop in SGLang's model file | Binding | a location inside SGLang's version |
+| Qwen-Image-2.1's first trunk call fills the prefix cache, so it must not be skipped | Binding | how *this engine* implements the model's text conditioning |
 | SGLang's FLUX.2 joins the streams once and its single blocks return one tensor | Binding | how *this engine* built that architecture |
 | TeaCache coefficients, good thresholds, sensitive layers | measurement history | fitted or measured |
 | graph capture is allowed for Qwen but not FLUX.2 | EngineAdapter | SGLang keeps the allowlist itself |
@@ -206,15 +209,16 @@ resolve, the optimizer can measure both.
 | | Step skip | TeaCache | FP8 linear |
 |---|---|---|---|
 | **Implementation** | `fractalyze-step-skip` (generic) | `fractalyze-teacache` (generic) | `sglang-native-fp8` (native) |
-| **Needs** | step observe, step prediction override, request state | timestep, request state, trunk control, signal tap | the engine's FP8 feature |
+| **Needs** | step observe, step prediction override, request state | timestep, request state, trunk observe, trunk output override, signal observe | the engine's FP8 feature |
 | **Provided by** | SGLangAdapter only | SGLangAdapter + per-model Binding | SGLangAdapter only |
 | **Model-specific code** | none | where the trunk and signal are | none |
-| **Installed** | per request; no reload | trunk wrapper before compile; state per request | at server launch |
+| **Installed** | per request; no reload | hooks at the trunk's edges before the model is built; state per request and CFG branch | at server launch |
 | **Decides** | every step, outside the transformer | every step, inside the transformer | never (static) |
 | **Constraints** | `request_state` | `mutates_model`, `dynamic_in_forward`, `request_state` | `mutates_model` |
 | **Exclusive resource** | the step's prediction | the trunk | the linear layers |
-| **Graph capture** | safe (verified on Qwen-Image-2.1, [exp 001](../experiments/001-step-control/README.md)) | refused | handled by the engine |
-| **How we check it ran** | count skipped steps | count reused trunk calls | count FP8 layers in the live model |
+| **Graph capture** | safe (verified on Qwen-Image-2.1, [exp 001](../experiments/001-step-control/README.md)) | refused (verified: replay never runs the hooks, [exp 002](../experiments/002-trunk-control/README.md)) | handled by the engine |
+| **torch.compile** | unaffected | needs regional compile, which FLUX.2 in SGLang lacks ([exp 002](../experiments/002-trunk-control/README.md)) | handled by the engine |
+| **How we check it ran** | count skipped steps | count trunk blocks that did not run | count FP8 layers in the live model |
 
 The decomposition is natural for all three. It gets harder the moment we
 want *selective* FP8, keeping some layers in full precision. That needs a
@@ -231,8 +235,9 @@ just an engine flag.
 | `step_schedule_mutate` | common | SGLangAdapter | `TimestepPreparationStage.forward` (`timestep_preparation.py:78`) |
 | `timestep_state` | common | SGLangAdapter | step state; forward context |
 | `request_local_state` | common | SGLangAdapter | the request object; which CFG branch is running |
-| `trunk_control` | common, per Binding | Binding | the block loop(s) in each model's forward |
-| `signal_tap` | common, per Binding | Binding | e.g. the first block's modulation |
+| `trunk_observe` | common, per Binding | SGLangAdapter + Binding | first block call (entry) and the output norm's input (exit) |
+| `trunk_output_override` | common, per Binding | SGLangAdapter + Binding | the same edges; blocks return their identity while overridden |
+| `signal_observe` | common, per Binding | Binding | e.g. the first block's modulated image input |
 | `engine_feature.*` | per engine | SGLangAdapter | launch flags, environment, per-request switches |
 | `compile_control` | per engine | SGLangAdapter | compile and graph-capture flags |
 | `block_access` | **optional** | Binding, if it can | the target's own block list and signature |
@@ -264,13 +269,18 @@ the ADRs):
   because it desyncs the scheduler. All three survive graph capture.
   [ADR 0011](adr/0011-split-step-control.md),
   [experiment 001](../experiments/001-step-control/README.md)
+- Trunk control needs a per-model Binding, and is three capabilities defined
+  at the trunk's edges: observe, override the output, observe the signal. One
+  generic implementation served Qwen-Image-2.1 and FLUX.2; it needs a compile
+  mode that leaves the trunk loop in Python, and graph replay rules it out.
+  [ADR 0012](adr/0012-trunk-capabilities.md),
+  [experiment 002](../experiments/002-trunk-control/README.md)
 
 **Open until an experiment answers it:**
-- Do the step capabilities map cleanly onto vLLM-Omni's and ComfyUI's
-  denoising loops?
-- Can one generic TeaCache serve both Qwen-Image and FLUX.2 through their
-  Bindings?
-- Does a trunk wrapper survive torch.compile, and at what cost?
+- Can trunk override and the signal work when one model call serves several
+  requests or CFG branches, as in vLLM-Omni and ComfyUI?
+- Does a real cache policy built on these capabilities pay off, and with what
+  thresholds per model?
 - Does linear replacement need a Binding in practice?
 - What capabilities does ComfyUI need, given that it executes node graphs?
 
