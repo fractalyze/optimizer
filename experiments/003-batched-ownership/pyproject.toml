@@ -1,0 +1,16 @@
+[project]
+name = "opt-batch-probe"
+version = "0.0.0"
+description = "SPIKE: experiment 003 probe. Runs experiment 002's trunk policy per batch row when one SGLang DiT call serves several requests. Not production code."
+requires-python = ">=3.10"
+dependencies = ["opt-trunk-probe"]
+
+[project.entry-points."sglang.multimodal_gen.plugins"]
+opt_batch_probe = "opt_batch_probe.plugin:register"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["opt_batch_probe"]

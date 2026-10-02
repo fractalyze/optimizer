@@ -1,0 +1,44 @@
+{
+ "defaults": {
+  "height": 1024,
+  "width": 1024,
+  "num_inference_steps": 8,
+  "guidance_scale": 4.0,
+  "negative_prompt": ""
+ },
+ "items": {
+  "a": {
+   "prompt": "A neon shop sign that reads \"FLUX KLEIN\", rainy night, reflections on wet pavement",
+   "seed": 101
+  },
+  "b": {
+   "prompt": "A red fox asleep in fresh snow under pine trees, soft morning light",
+   "seed": 202
+  }
+ },
+ "rounds": [
+  {
+   "name": "solo-a",
+   "items": [
+    {
+     "item": "a",
+     "mode": "observe"
+    }
+   ]
+  },
+  {
+   "name": "batch-observe",
+   "repeat": 1,
+   "items": [
+    {
+     "item": "a",
+     "mode": "observe"
+    },
+    {
+     "item": "b",
+     "mode": "observe"
+    }
+   ]
+  }
+ ]
+}
