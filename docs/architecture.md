@@ -8,7 +8,8 @@ each part is shaped this way is in the ADRs
 [0010](adr/0010-v1-capabilities-and-first-techniques.md),
 [0011](adr/0011-split-step-control.md),
 [0012](adr/0012-trunk-capabilities.md),
-[0013](adr/0013-feasibility-and-engagement.md)). The evidence from
+[0013](adr/0013-feasibility-and-engagement.md),
+[0014](adr/0014-batched-execution-owners.md)). The evidence from
 SGLang's code is in the [investigation](architecture-investigation.md).
 
 ## In short
@@ -410,6 +411,10 @@ list of class paths and four short functions.
   implementation passes; implementations declare execution requirements, the
   EngineAdapter interprets the applied mode, and only an engaged run is a
   measurement. [ADR 0013](adr/0013-feasibility-and-engagement.md)
+- In a batched call the EngineAdapter maps rows to owners; a decision by some
+  owners is spliced, compute is saved only when all agree, and engagement is
+  per owner. Runtime-validated in SGLang only.
+  [ADR 0014](adr/0014-batched-execution-owners.md)
 
 **Evidence behind the settled items**, kept visibly apart:
 - *Runtime validated* (SGLang, Qwen-Image-2.1 and FLUX.2-klein, experiments
@@ -422,17 +427,15 @@ list of class paths and four short functions.
   runtime-validated portability.
 
 **Open until an experiment answers it:**
-- **Logical ownership under batching.** When one model call serves several
-  requests, CFG branches or samples (vLLM-Omni batches requests; ComfyUI
-  batches cond and uncond), can `trunk_output_override` act on selected slices
-  only, can one request reuse while another computes, and does
-  `signal_observe` need logical ownership metadata (signal plus which slice
-  belongs to whom) rather than a plain tensor? To inspect: in vLLM-Omni,
-  request batching, per-request policies, how one call represents several
-  requests; in ComfyUI, cond/uncond batching, ModelPatcher semantics,
-  node-level versus forward-level control.
-- **The final ownership model of `request_local_state`:** request × CFG branch
-  today; request × batch slice × branch, or no request at all, untested.
+- **Logical ownership under batching, beyond SGLang.** In SGLang the adapter
+  maps batch rows to owners, the implementation and Bindings stay unchanged,
+  and a reuse saves compute only when every row agrees
+  ([ADR 0014](adr/0014-batched-execution-owners.md),
+  [experiment 003](../experiments/003-batched-ownership/README.md)). Whether
+  that holds where rows are CFG branches (ComfyUI) or under vLLM-Omni's request
+  batching is untested.
+- **The final ownership model of `request_local_state`:** request × CFG branch,
+  mapped onto batch rows in SGLang; no request at all (ComfyUI) untested.
 - **The final cross-engine execution-mode model:** are two execution
   requirements enough for a second engine?
 - Does a real cache policy built on these capabilities pay off, and with what

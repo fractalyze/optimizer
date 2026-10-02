@@ -404,7 +404,7 @@ architecture runs first. Each one names the claim it can break.
         graph breaks and, on FLUX.2, an identity override changes the image;
         graph replay never runs the hooks. Recorded in
         [ADR 0012](adr/0012-trunk-capabilities.md).
-- [ ] **2b. Trunk capabilities work when one model call serves several
+- [x] **2b. Trunk capabilities work when one model call serves several
       requests or CFG branches.** ComfyUI batches cond and uncond into one
       call and vLLM-Omni batches requests, so override and signal would act
       per batch slice. SGLang ran one request and one branch per call in
@@ -420,6 +420,20 @@ architecture runs first. Each one names the claim it can break.
         `batching_max_size > 1`), so it can be tried there first; whether it
         puts two Qwen-Image-2.1 or FLUX.2 requests into one DiT call is the
         first thing to check.
+      - **Done for SGLang requests**
+        ([experiment 003](../experiments/003-batched-ownership/README.md)):
+        SGLang batched two requests into one DiT call; the implementation and
+        Bindings ran unchanged, one owner per row; one owner's reuse left the
+        other bitwise identical; compute is saved only when every row agrees;
+        SGLang keeps no per-row request id. Recorded in
+        [ADR 0014](adr/0014-batched-execution-owners.md).
+- [ ] **2c. The same holds on a second engine's batched calls.** vLLM-Omni
+      batches requests; ComfyUI stacks cond and uncond as rows. Smallest
+      runtime test that could falsify ADR 0014 on vLLM-Omni.
+      - Falsified if per-row ownership needs a new capability or a change to
+        the implementation, rather than a different seam in the adapter.
+      - Also answers whether vLLM-Omni keeps a request id per row, and where
+        per-request state can live there.
 - [x] **3. Capabilities are not SGLang-shaped.** By code reading only, map
       the step capabilities, trunk control and `request_local_state` onto
       vLLM-Omni's and ComfyUI's Qwen-Image/FLUX paths.
