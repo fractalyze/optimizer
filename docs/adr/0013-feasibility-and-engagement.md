@@ -1,6 +1,6 @@
-# ADR 0013: An implementation must be feasible in the current execution mode, and a result counts only if it engaged
+# ADR 0013: Execution feasibility and engagement verification are stages every implementation passes
 
-Status: accepted · 2026-10-02 · supersedes the `dynamic_in_forward` constraint of [ADR 0009](0009-lifecycle-constraints.md)
+Status: accepted · 2026-10-02 · amends the engine mapping of `dynamic_in_forward` in [ADR 0009](0009-lifecycle-constraints.md)
 
 ## In short
 
@@ -8,18 +8,21 @@ A target that *provides* a capability may still be unable to use it in the
 way it is being run. [Experiment 002](../../experiments/002-trunk-control/README.md)
 showed one trunk-reuse implementation that was exact in eager mode, changed
 the image under whole-model compile, and silently did nothing under graph
-replay. So the framework now asks three questions, in order:
+replay. So every implementation, not just TeaCache, now passes two more stages:
 
-1. **Supported:** can this target provide every capability the implementation
-   needs? (capability resolution, as before)
-2. **Feasible:** can it provide them *in the execution mode actually applied*,
-   given the implementation's lifecycle needs and the other implementations it
-   runs with?
-3. **Engaged:** did the run prove, from runtime evidence, that the
-   optimization path executed?
+```text
+Technique → Implementation → required capabilities → capability resolution
+  (EngineAdapter + Binding) → EXECUTION FEASIBILITY → install / run
+  → ENGAGEMENT VERIFICATION → measurement (only if engaged)
+```
 
-Configuration alone answers none of these. A result enters measurement history
-as a data point only if all three are yes.
+- **Execution feasibility:** given this implementation, this target and the
+  execution mode the engine actually applied, can the required operations
+  execute correctly? The implementation states what behavior it needs, in
+  semantic terms; the EngineAdapter decides whether the current mode gives it.
+- **Engagement verification:** after the run, runtime evidence must prove the
+  implementation actually executed. Each implementation defines its own
+  evidence. No benchmark result is accepted without it.
 
 ## Context
 
@@ -35,138 +38,166 @@ Experiment 001 adds one more: a graph mode requested for FLUX.2 was turned off
 by SGLang with only a warning. In every row, configuration said "on". Only
 counting what ran told the cases apart.
 
-[ADR 0009](0009-lifecycle-constraints.md) tried to capture this with one flag,
-`dynamic_in_forward`, mapped to "refused with graph capture; graph breaks under
-torch.compile". The evidence is finer than that: compile was fine for one model
-and not the other, and fine for observing but not always for overriding.
+[ADR 0009](0009-lifecycle-constraints.md) had mapped `dynamic_in_forward`
+straight to engine consequences: "refused with graph capture; graph breaks
+under torch.compile". The evidence is finer than that: compile was fine for
+one model and not the other, and fine for observing but not always for
+overriding. A flag with a fixed engine meaning cannot express that.
 
 ## Decision
 
-### Execution mode: shared vocabulary is small, the details stay in the adapter
+### Four states, never inferred from one another
 
-Each EngineAdapter keeps its own record of the execution mode the engine
-*applied* (not requested). For SGLang in V1 that is two fields, both read back
-from the engine:
-
-| Field | Values seen |
-|---|---|
-| compile scope | off · regional (blocks only) · whole model |
-| graph mode | off · breakable CUDA graphs |
-
-Implementations never see this record. What crosses the boundary is one fact
-per seam, the **interception state**: what happens to code placed at that seam
-in this mode.
-
-| Interception state | Meaning | SGLang evidence |
+| State | Means | Example (TeaCache) |
 |---|---|---|
-| `live` | runs as ordinary Python on every invocation | eager; the step seams in every mode tested |
-| `traced` | runs, but inside code the compiler traces; results may differ from eager and graph breaks cost time | trunk edges under regional or whole-model compile |
-| `bypassed` | the invocation is replayed from a recording; the seam does not run | trunk edges under graph replay |
+| configured | the optimizer selected it | TeaCache was chosen with a threshold |
+| supported | the target resolves every required capability | SGLang + a Binding provide `trunk_output_override` |
+| feasible | the applied execution mode lets the required operations execute correctly | the trunk callbacks run on every trunk call, and overrides are used as given |
+| engaged | runtime evidence shows the optimization executed | trunk blocks actually did not run on the reused calls |
 
-### Feasibility follows from the capabilities, not from new flags
+### The implementation declares three kinds of requirement
 
-Every capability is one of two kinds:
-
-- **observe** (`step_observe`, `trunk_observe`, `signal_observe`,
-  `timestep_state`): only reads;
-- **decide** (`step_prediction_override`, `step_schedule_mutate`,
-  `trunk_output_override`): changes what the model computes.
-
-| Interception state of the seam | observe | decide |
+| Kind | Examples | Interpreted by |
 |---|---|---|
-| `live` | feasible | feasible |
-| `traced` | feasible | feasible **only after an identity check passes** for this target and mode |
-| `bypassed` | infeasible | infeasible |
+| **A. capabilities** | `timestep_state`, `signal_observe`, `trunk_output_override`, `request_local_state` | capability resolution (EngineAdapter, Binding, ModelSpec) |
+| **B. lifecycle** | `mutates_model`, `dynamic_in_forward`, `request_state` ([ADR 0009](0009-lifecycle-constraints.md), unchanged) | the EngineAdapter, onto its own lifecycle |
+| **C. execution** | `runs_every_invocation`, `override_exact`, each on a capability it uses | the EngineAdapter, against the applied execution mode |
 
-The **identity check** runs the decide capability with an override that returns
-exactly what was computed, and requires the final output to be bitwise identical
-to a run without the implementation. Its result is measured, so it lives in
-measurement history. It must be judged on the final output, never by checks
-inside the traced code: those are traced too, and in experiment 002 they
-reported "not equal" with zero differing elements.
+Execution requirements say what behavior the implementation needs, never which
+engine setting provides it. V1 has exactly the two that experiment 002's
+failures call for:
 
-An implementation therefore declares no execution-mode constraints of its own.
-They follow from the capabilities it requires. This replaces ADR 0009's
-`dynamic_in_forward`, which said the same thing more coarsely. `mutates_model`
-and `request_state` stay as they are.
+| Requirement | Means | Broken in experiment 002 by |
+|---|---|---|
+| `runs_every_invocation(capability)` | the implementation's code at this capability runs on every logical invocation, e.g. every trunk call | graph replay: the trunk callbacks did not run |
+| `override_exact(capability)` | what the implementation supplies through a decide-type capability is exactly what the model continues with | whole-model compile on FLUX.2: an identity override changed the image |
 
-Feasibility is a check before the run over four things:
+TeaCache declares both on its trunk capabilities. A field such as
+`whole_model_compile_supported` is deliberately absent: it is an SGLang
+consequence, not a need, and it would be wrong for the next engine.
+
+### The EngineAdapter interprets the execution mode
+
+The EngineAdapter alone knows compile boundaries, graph-capture boundaries,
+whether Python callbacks execute, and whether the engine silently fell back
+from what was requested. It keeps a record of the mode the engine *applied*,
+read back from the engine. For SGLang in V1 that is two fields: compile scope
+(off, regional, whole model) and graph mode (off, breakable CUDA graphs). That
+record is SGLangAdapter's and is not shared vocabulary.
+
+From it, the adapter answers per requirement:
+
+| SGLang, measured | `runs_every_invocation` (trunk) | `override_exact` (trunk) | step seams |
+|---|---|---|---|
+| eager | holds | holds | both hold |
+| regional compile (Qwen-Image-2.1) | holds | holds, identity check passed | both hold |
+| whole-model compile | holds | Qwen-Image-2.1: holds, identity check passed · FLUX.2: **fails** | both hold |
+| breakable CUDA graphs (Qwen-Image-2.1) | **fails** | **fails** | both hold |
+
+Where compiled code sits between the implementation and the model, the adapter
+establishes `override_exact` with an **identity check**: run the override with
+a payload equal to what was computed, and require the final output to be
+bitwise identical to a run without the implementation. The result depends on
+the target, so it is recorded in measurement history. It must be judged on the
+final output, never by checks inside the compiled code: those are compiled too,
+and in experiment 002 they reported "not equal" with zero differing elements.
+
+The **Binding gets none of this.** The FLUX.2 / Qwen-Image-2.1 difference under
+whole-model compile is a measured fact about a target, held in measurement
+history, not model structure. Compile or graph-capture logic moves into a
+Binding only if evidence shows it is genuinely model-specific.
+
+Feasibility is then one check before the run:
 
 | Check | Fails when |
 |---|---|
-| capabilities | a required capability cannot be resolved on this target |
-| lifecycle | `mutates_model` / `request_state` cannot be honored ([ADR 0009](0009-lifecycle-constraints.md)) |
-| execution mode | a required capability's seam is `bypassed`, or `traced` without a passed identity check |
+| capabilities | a required capability cannot be resolved (`UNSUPPORTED`) |
+| lifecycle | `mutates_model` / `dynamic_in_forward` / `request_state` cannot be honored |
+| execution | an execution requirement does not hold in the applied mode |
 | conflicts | two implementations claim the same exclusive resource (`owns`) |
 
-### Engagement is each implementation's own check, on evidence the adapter reports
+### Engagement: each implementation brings its own evidence check
 
-Each implementation provides `engaged(evidence)`, returning a verdict and a
-reason. The adapter supplies the evidence as counters of what actually ran at
-each capability's seam, so the implementation stays engine-free. There is no
-universal metric; examples:
+Each implementation provides `engaged(evidence) -> (verdict, reason)`. The
+EngineAdapter supplies the evidence as counters of what actually ran at the
+seams the implementation used, so the implementation stays engine-free. There
+is no universal metric.
 
 | Implementation | Engaged when |
 |---|---|
-| step prediction reuse | DiT calls fell by the number of reuses it decided |
-| step schedule mutation | the schedule that ran is as long as it asked for |
-| trunk reuse (TeaCache) | it observed every trunk invocation the request made, and for each reuse it decided, the trunk's blocks did not run |
-| native FP8 | the live model's linear layers report the FP8 method |
-| an engine feature (compile, graph mode) | the engine's applied settings, plus its own counters (graph replays) |
+| trunk reuse (TeaCache) | it saw every trunk call, and on every reuse it decided, the trunk's blocks did not run |
+| prediction reuse (step skip) | model prediction calls fell by the number of reuses it decided |
+| timestep reduction | the schedule that ran is as long as it asked for |
+| native FP8 | the live model's layers report the FP8 method |
+| CUDA graphs (an engine feature) | graph replays actually happened |
 
-Feasibility is a prediction; engagement is the proof. The two can disagree:
-under graph mode, a request whose shape was never captured runs eager, so the
-same configuration can be `bypassed` for one request and `live` for the next.
+Feasibility is a prediction; engagement is the proof. They can disagree: under
+graph mode, a request whose shape was never captured runs eager, so the same
+configuration can fail `runs_every_invocation` for one request and satisfy it
+for the next.
 
 ### Every run ends in exactly one status
 
 | Status | Means | Enters measurement history as |
 |---|---|---|
 | `UNSUPPORTED` | a capability cannot be resolved on this target | a fact about the target |
-| `INFEASIBLE` | lifecycle, execution mode or a conflict rules it out | a fact about the target and mode |
+| `INFEASIBLE` | lifecycle, execution or a conflict rules it out | a fact about the target and mode |
 | `RUNTIME_ERROR` | it crashed | a failure |
-| `NOT_ENGAGED` | it ran, but the evidence does not show the optimization executed | a failure, **never a speed or quality point** |
+| `FAILED_TO_ENGAGE` | it ran, but the evidence does not show the optimization executed | a failure, **never a speed or quality point** |
 | `VALID` | engaged | a speed and quality data point |
 
-`NOT_ENGAGED` is what separates "configured but never executed" from "executed
-and gave no speedup". Only `VALID` is a measurement.
+The distinction that matters: "the optimization ran and gave no speedup" is a
+`VALID` measurement; "the optimization never executed" is `FAILED_TO_ENGAGE`,
+and the optimizer must not learn from it as if it were one.
 
 ## Consequences
 
-- The composer becomes a feasibility check over four inputs, not two.
-- A new EngineAdapter must report interception states for its seams. It need not
-  share SGLang's mode record.
-- Every implementation must ship `engaged()`. A native implementation with no
-  way to prove it ran cannot produce `VALID` results.
+- The composer is a feasibility check over four inputs, not two.
+- A new EngineAdapter must answer the execution requirements for its seams; it
+  need not share SGLang's mode record.
+- Every implementation must ship `engaged()`. One that cannot prove it ran
+  cannot produce `VALID` results.
 - TeaCache on FLUX.2 in SGLang is feasible only in eager mode: whole-model
-  compile failed the identity check, and FLUX.2 has no regional compile there.
+  compile breaks `override_exact`, and SGLang offers FLUX.2 no regional compile.
 
 ## What this rests on
 
-**Runtime validated** (experiments 001 and 002, SGLang, Qwen-Image-2.1 and
-FLUX.2-klein): the interception states of the step seams and trunk edges in
-eager, regional compile, whole-model compile and breakable graph mode; the
-identity check passing for Qwen-Image-2.1 under both compile scopes and failing
-for FLUX.2 under whole-model compile; engagement by counting calls, steps and
-blocks that ran.
+**Runtime validated** (experiments 001 and 002, SGLang @ `8ca82118e`,
+Qwen-Image-2.1 and FLUX.2-klein):
+- eager and regional compile kept the tested trunk interception exact;
+- whole-model compile caused concrete problems: tripled graph breaks, and on
+  FLUX.2 an identity override that changed the image;
+- graph replay bypassed the trunk interception entirely, while the step seams
+  held in every mode tested;
+- counting calls, steps and blocks that actually ran detected engagement,
+  including its absence.
 
-**Code reading only:** that vLLM-Omni compiles only the repeated blocks by
-default and has a whole-model option, and that neither vLLM-Omni nor ComfyUI
-graph-captures these models.
+**Code reading only:** vLLM-Omni compiles only the repeated blocks by default and
+has a whole-model option; neither vLLM-Omni nor ComfyUI graph-captures these
+models.
 
-**Open:** whether three interception states are enough for a second engine;
-whether `traced` should ever be accepted for decide capabilities without an
-identity check.
+**Open:**
+- whether two execution requirements are enough for a second engine, and what
+  that engine's mode record looks like;
+- whether `override_exact` may ever be granted under compile without an
+  identity check;
+- engagement per execution item rather than per call, once one call serves
+  several items.
 
 ## Alternatives rejected
 
-- **A universal execution-mode hierarchy.** One engine has been measured. The
-  interception state is the smallest shared fact that explains every result.
-  *Revisit when* a second EngineAdapter needs a state these three cannot express.
-- **Implementations declare engine-shaped constraints** (e.g. "requires graph
-  capture off"). That puts engine knowledge into generic code, and the same
-  fact is already implied by the capabilities required.
-- **Count configuration as engagement.** Experiment 002's graph-mode reuse
+- **A universal execution-mode enum** (eager, regional compile, whole compile,
+  CUDA graph, …). Those terms describe SGLang. *Revisit when* a second
+  EngineAdapter shows a shared mode vocabulary pays for itself.
+- **Engine-shaped fields on the implementation**, such as
+  `cuda_graph_supported` or "requires whole-model compile off". They put engine
+  knowledge into generic code and would be wrong for the next engine.
+- **Deriving execution needs from a capability's kind** (observe versus
+  decide), with seams classified as running live, traced or bypassed. It
+  explains experiment 002 but makes the framework guess. What an
+  implementation needs is behavior, and two implementations using the same capability can need
+  different behavior; the implementation states it.
+- **Counting configuration as engagement.** Experiment 002's graph-mode reuse
   reported "on" and did nothing.
 - **One engagement metric for all implementations.** A trunk reuse, an FP8 swap
   and a schedule change leave different evidence.

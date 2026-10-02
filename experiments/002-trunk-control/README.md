@@ -79,7 +79,7 @@ The implementation consumes five capabilities:
 | Capability | Contract the implementation relies on |
 |---|---|
 | `timestep_state` | step index and total steps of the current trunk call |
-| `execution_local_state` (was `request_local_state`) | a dict owned by one request *and one CFG branch*, gone with the request |
+| `request_local_state` | a dict owned by one request *and one CFG branch*, gone with the request |
 | `trunk_observe` | called once on entry and once on exit of every trunk invocation |
 | `trunk_output_override` | on entry, return a payload instead of running the trunk; on exit, replace the result. A call may refuse to be overridden |
 | `signal_observe` | an opaque tensor per call, same shape across one request and branch |
@@ -240,7 +240,7 @@ logic stayed in the adapter.
 | Capability | Verdict | Evidence |
 |---|---|---|
 | `timestep_state` | validated | step index and total steps reach code inside the DiT call through SGLang's forward context, for both models |
-| `request_local_state` | validated, **renamed** `execution_local_state` | state must be per request *and* per CFG branch, and ComfyUI has no request; concurrent requests not tested |
+| `request_local_state` | validated; owner is request × CFG branch | state must be per request *and* per CFG branch; ComfyUI has no request; concurrent requests not tested, so the final ownership model stays open |
 | `trunk_observe` | validated | eager, regional and whole-model compile, bitwise transparent; not under graph replay |
 | `trunk_output_override` | validated, **with a per-call refusal** | exact identity and real block suppression on both models; a Binding may declare a call not overridable (Qwen's prefill); needs regional compile or eager |
 | `signal_observe` | validated, as an opaque tensor | same concept on both models, different formula and scale; the implementation only takes a relative change |
@@ -282,7 +282,7 @@ Read at vLLM-Omni `bbee488` and ComfyUI `1b883be`. Nothing was implemented.
 | Capability | vLLM-Omni | ComfyUI |
 |---|---|---|
 | `timestep_state` | forward-context slots exist, but Qwen and FLUX pipelines do not fill them; each owns its loop | sigmas in `transformer_options`; **no step index**, and multi-call samplers break "one step = one call" |
-| `execution_local_state` | no request object reaches the DiT; one runner batch plays the role | no request at all; one sampling run plays the role |
+| `request_local_state` | no request object reaches the DiT; one runner batch plays the role | no request at all; one sampling run plays the role |
 | `trunk_observe` | same edges: blocks loop, `norm_out` (Qwen `qwen_image_transformer.py:1264,1279`; FLUX.2 `flux2_transformer.py:992–1015`) | same edges: `post_input` patch, `norm_out` / `final_layer` |
 | `trunk_output_override` | **already exists**: its TeaCache replaces `forward` through per-model "extractors" (`cache/teacache/extractors.py`), a Binding in all but name; FLUX.2 residual is image-only like ours | no whole-stack patch; per-block replacement patches on every block, or a wrapper around `forward_orig` |
 | `signal_observe` | same signal, first-block modulated input | recomputable from a block-0 replacement patch |
