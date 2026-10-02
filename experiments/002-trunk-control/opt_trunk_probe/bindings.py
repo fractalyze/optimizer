@@ -10,9 +10,11 @@ A Binding answers, for one model as SGLang builds it:
   - the cache signal: the first block's modulated image input;
   - whether this invocation may be overridden at all.
 
-Everything model-specific in experiment 002 lives in this file. The payload
-forms (`capture`, `apply`) are shared because, at the trunk boundary, both
-models turned out to carry the same thing: image tokens in, image tokens out.
+Everything model-specific in experiment 002 lives in this file, and nothing
+else does: payload forms, request state, compile and graph behavior and
+engagement counting are the adapter's. At the trunk boundary both models carry
+the same thing, image tokens in and image tokens out, which is why the payload
+forms need no Binding.
 
 Code locations are at SGLang 8ca82118e, python/sglang/multimodal_gen/runtime/.
 """
@@ -22,25 +24,6 @@ from __future__ import annotations
 import torch.nn.functional as F
 
 _DITS = "sglang.multimodal_gen.runtime.models.dits"
-
-
-def capture(kind, entry, out):
-    """Pack a trunk result as a payload. Shared: both trunks map image tokens to
-    image tokens of the same shape."""
-    if kind == "output":
-        return ("output", out.clone())
-    if kind == "residual":
-        # fp32 so that entry + (out - entry) rounds back to `out` exactly.
-        return ("residual", out.float() - entry.float())
-    raise ValueError(kind)
-
-
-def apply(entry, payload):
-    """Rebuild a trunk result from a payload and this invocation's entry."""
-    kind, value = payload
-    if kind == "output":
-        return value
-    return (entry.float() + value).to(entry.dtype)
 
 
 def _modulated(x, eps, scale, shift=None):

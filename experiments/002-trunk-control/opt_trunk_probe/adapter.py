@@ -14,8 +14,29 @@ import json
 import os
 import time
 
-from opt_trunk_probe import bindings as payloads
 from opt_trunk_probe import policy
+
+# Payload forms are model-independent: at the trunk edges both models carry
+# image tokens in and image tokens out of the same shape.
+
+
+def capture(kind, entry, out):
+    """Pack a trunk result as a payload."""
+    if kind == "output":
+        return ("output", out.clone())
+    if kind == "residual":
+        # fp32 so that entry + (out - entry) rounds back to `out` exactly.
+        return ("residual", out.float() - entry.float())
+    raise ValueError(kind)
+
+
+def apply(entry, payload):
+    """Rebuild a trunk result from a payload and this invocation's entry."""
+    kind, value = payload
+    if kind == "output":
+        return value
+    return (entry.float() + value).to(entry.dtype)
+
 
 _KEY = "opt_trunk"  # this probe's slot in the request's own `extra` dict
 _current = contextvars.ContextVar("opt_trunk_call", default=None)
@@ -128,17 +149,17 @@ def around_exit(binding):
         if call is None or call.binding is not binding or self is not binding.exit_module(call.model):
             return original(self, x, *args, **kwargs)
         if call.override is not None:
-            x = payloads.apply(call.entry, call.override)
+            x = apply(call.entry, call.override)
             call.record(exit_from="override")
         else:
             entry = call.entry
 
-            def capture(kind):
-                return payloads.capture(kind, entry, x)
+            def pack(kind):
+                return capture(kind, entry, x)
 
-            replacement = policy.on_exit(call, call.policy, call.state, capture)
+            replacement = policy.on_exit(call, call.policy, call.state, pack)
             if replacement is not None:
-                rebuilt = payloads.apply(entry, replacement)
+                rebuilt = apply(entry, replacement)
                 call.record(exit_from=f"identity:{replacement[0]}", exit=_meta(x),
                             rebuilt=_meta(rebuilt),
                             identity_exact=bool((rebuilt == x).all()),
