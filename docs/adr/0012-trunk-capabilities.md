@@ -1,6 +1,7 @@
 # ADR 0012: Trunk control is three capabilities, defined at the trunk's edges
 
 Status: accepted · 2026-10-02 · amends the capability list of [ADR 0010](0010-v1-capabilities-and-first-techniques.md)
+· batched calls in SGLang resolved by [ADR 0014](0014-batched-execution-owners.md)
 
 ## In short
 

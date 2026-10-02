@@ -1,0 +1,117 @@
+{
+ "defaults": {
+  "height": 1024,
+  "width": 1024,
+  "num_inference_steps": 40,
+  "guidance_scale": 1.0
+ },
+ "items": {
+  "a": {
+   "prompt": "A neon shop sign that reads \"QWEN IMAGE 2.1\", rainy night, reflections on wet pavement",
+   "seed": 101
+  },
+  "b": {
+   "prompt": "A red fox asleep in fresh snow under pine trees, soft morning light",
+   "seed": 202
+  }
+ },
+ "rounds": [
+  {
+   "name": "solo-a",
+   "items": [
+    {
+     "item": "a",
+     "mode": "observe"
+    }
+   ]
+  },
+  {
+   "name": "solo-b",
+   "items": [
+    {
+     "item": "b",
+     "mode": "observe"
+    }
+   ]
+  },
+  {
+   "name": "batch-observe",
+   "repeat": 2,
+   "items": [
+    {
+     "item": "a",
+     "mode": "observe"
+    },
+    {
+     "item": "b",
+     "mode": "observe"
+    }
+   ]
+  },
+  {
+   "name": "batch-a-identity",
+   "items": [
+    {
+     "item": "a",
+     "mode": "identity_residual"
+    },
+    {
+     "item": "b",
+     "mode": "observe"
+    }
+   ]
+  },
+  {
+   "name": "batch-a-reuse",
+   "items": [
+    {
+     "item": "a",
+     "mode": "reuse",
+     "k": 20
+    },
+    {
+     "item": "b",
+     "mode": "observe"
+    }
+   ]
+  },
+  {
+   "name": "batch-both-reuse",
+   "items": [
+    {
+     "item": "a",
+     "mode": "reuse",
+     "k": 20
+    },
+    {
+     "item": "b",
+     "mode": "reuse",
+     "k": 20
+    }
+   ]
+  },
+  {
+   "name": "solo-a-reuse",
+   "items": [
+    {
+     "item": "a",
+     "mode": "reuse",
+     "k": 20
+    }
+   ]
+  },
+  {
+   "name": "batch-observe-after",
+   "items": [
+    {
+     "item": "a",
+     "mode": "observe"
+    },
+    {
+     "item": "b",
+     "mode": "observe"
+    }
+   ]
+  }
+ ]
+}
