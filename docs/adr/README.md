@@ -39,3 +39,4 @@ history of the design is visible.
 | [0011](0011-split-step-control.md) | Split step control into observe, prediction override and schedule mutation | accepted |
 | [0012](0012-trunk-capabilities.md) | Trunk control is three capabilities, defined at the trunk's edges | accepted |
 | [0013](0013-feasibility-and-engagement.md) | Execution feasibility and engagement verification are stages every implementation passes | accepted |
+| [0014](0014-batched-execution-owners.md) | In a batched model call, the EngineAdapter maps rows to owners; savings need agreement | accepted |
