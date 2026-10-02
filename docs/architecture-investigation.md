@@ -411,6 +411,15 @@ architecture runs first. Each one names the claim it can break.
       experiment 002.
       - Falsified if a per-slice override cannot be expressed without the
         implementation knowing the batch layout.
+      - Also answers whether `signal_observe` must return a structured view
+        that says which slice belongs to which execution item
+        ([ADR 0012](adr/0012-trunk-capabilities.md), Open), and whether
+        engagement can be proven per item rather than per call
+        ([ADR 0013](adr/0013-feasibility-and-engagement.md)).
+      - SGLang has dynamic batching (`batching_mode=dynamic`,
+        `batching_max_size > 1`), so it can be tried there first; whether it
+        puts two Qwen-Image-2.1 or FLUX.2 requests into one DiT call is the
+        first thing to check.
 - [x] **3. Capabilities are not SGLang-shaped.** By code reading only, map
       the step capabilities, trunk control and `request_local_state` onto
       vLLM-Omni's and ComfyUI's Qwen-Image/FLUX paths.
