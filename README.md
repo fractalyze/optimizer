@@ -32,4 +32,5 @@ Start with **Architecture**; the rest explains where it came from.
 - [Decision records](docs/adr/README.md) — why each part is shaped the way it is, what was rejected, and what was superseded
 - [Investigation: Qwen-Image and FLUX in SGLang](docs/architecture-investigation.md) — the evidence from SGLang's code, and the experiments that could still prove the design wrong
 - [Experiment 001: step control](experiments/001-step-control/README.md) — one engine-level plugin on Qwen-Image-2.1 and FLUX.2-klein; why step control became three capabilities
+- [Experiment 002: trunk control](experiments/002-trunk-control/README.md) — one TeaCache-style implementation on both models through per-model Bindings; what compile and graph replay do to it
 - [Sol-Engine](docs/sol-engine.md) — the NVIDIA system this project is modeled on, and which parts of it are not public
