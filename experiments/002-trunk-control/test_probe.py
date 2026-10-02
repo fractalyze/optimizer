@@ -10,7 +10,7 @@ from types import SimpleNamespace
 import pytest
 import torch
 
-from opt_trunk_probe import adapter, bindings
+from opt_trunk_probe import adapter
 
 
 class FakeBinding:
@@ -99,7 +99,7 @@ def test_identity_override_is_exact(tmp_path, monkeypatch, mode):
 def test_residual_roundtrip_is_exact_in_bf16():
     entry = torch.randn(4, 64, 32).to(torch.bfloat16)
     out = (entry.float() * 1.7 + torch.randn(4, 64, 32)).to(torch.bfloat16)
-    rebuilt = bindings.apply(entry, bindings.capture("residual", entry, out))
+    rebuilt = adapter.apply(entry, adapter.capture("residual", entry, out))
     assert torch.equal(rebuilt, out)
 
 
