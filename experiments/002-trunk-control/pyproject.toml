@@ -1,0 +1,15 @@
+[project]
+name = "opt-trunk-probe"
+version = "0.0.0"
+description = "SPIKE: experiment 002 probe. Observes and overrides the SGLang DiT trunk through per-model Bindings. Not production code."
+requires-python = ">=3.10"
+
+[project.entry-points."sglang.multimodal_gen.plugins"]
+opt_trunk_probe = "opt_trunk_probe.plugin:register"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["opt_trunk_probe"]
