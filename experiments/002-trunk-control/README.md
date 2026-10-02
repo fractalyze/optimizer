@@ -2,6 +2,7 @@
 
 Status: done · 2026-10-02 · SGLang @ `8ca82118e` ([ADR 0003](../../docs/adr/0003-sglang-first-engine.md))
 · outcome recorded in [ADR 0012](../../docs/adr/0012-trunk-capabilities.md)
+and [ADR 0013](../../docs/adr/0013-feasibility-and-engagement.md)
 
 ## In short
 
@@ -78,7 +79,7 @@ The implementation consumes five capabilities:
 | Capability | Contract the implementation relies on |
 |---|---|
 | `timestep_state` | step index and total steps of the current trunk call |
-| `request_local_state` | a dict owned by one request *and one CFG branch*, gone with the request |
+| `execution_local_state` (was `request_local_state`) | a dict owned by one request *and one CFG branch*, gone with the request |
 | `trunk_observe` | called once on entry and once on exit of every trunk invocation |
 | `trunk_output_override` | on entry, return a payload instead of running the trunk; on exit, replace the result. A call may refuse to be overridden |
 | `signal_observe` | an opaque tensor per call, same shape across one request and branch |
@@ -192,9 +193,9 @@ technique.
 | Concern | SGLangAdapter | ModelSpec | Binding | Why |
 |---|---|---|---|---|
 | request, step, CFG branch | ✓ | | | SGLang's forward context, the same for every model |
-| per-request, per-branch state | ✓ | | | lives on SGLang's request object |
+| per-item state (request × branch) | ✓ | | | lives on SGLang's request object |
 | opening a trunk call, suppressing blocks, replacing the exit | ✓ | | | the mechanics are model-independent; only *where* is not |
-| payload forms (output, residual) | ✓ | | | both trunks map image tokens to image tokens |
+| payload forms (output, residual) | ✓ | | | both trunks map image tokens to image tokens; first written in the Binding file, moved to the adapter |
 | trunk location: DiT forward, block classes, exit module | | | ✓ | inline code in each model file |
 | a block's identity return value | | | ✓ | FLUX double blocks return two streams, single blocks one, Qwen blocks one |
 | which calls may be overridden | | | ✓ | Qwen's prefill writes the prefix cache; a SGLang × Qwen-Image-2.1 fact |
@@ -239,13 +240,15 @@ logic stayed in the adapter.
 | Capability | Verdict | Evidence |
 |---|---|---|
 | `timestep_state` | validated | step index and total steps reach code inside the DiT call through SGLang's forward context, for both models |
-| `request_local_state` | validated, **narrowed** | state must be per request *and* per CFG branch; concurrent requests not tested |
+| `request_local_state` | validated, **renamed** `execution_local_state` | state must be per request *and* per CFG branch, and ComfyUI has no request; concurrent requests not tested |
 | `trunk_observe` | validated | eager, regional and whole-model compile, bitwise transparent; not under graph replay |
 | `trunk_output_override` | validated, **with a per-call refusal** | exact identity and real block suppression on both models; a Binding may declare a call not overridable (Qwen's prefill); needs regional compile or eager |
 | `signal_observe` | validated, as an opaque tensor | same concept on both models, different formula and scale; the implementation only takes a relative change |
 
 ADR 0010's `trunk_control` and `signal_tap` are replaced by the three trunk
 capabilities above ([ADR 0012](../../docs/adr/0012-trunk-capabilities.md)).
+Which execution modes they are usable in, and how a run proves it used them,
+became a framework rule: [ADR 0013](../../docs/adr/0013-feasibility-and-engagement.md).
 
 Against the falsification criteria set before the runs:
 
@@ -279,7 +282,7 @@ Read at vLLM-Omni `bbee488` and ComfyUI `1b883be`. Nothing was implemented.
 | Capability | vLLM-Omni | ComfyUI |
 |---|---|---|
 | `timestep_state` | forward-context slots exist, but Qwen and FLUX pipelines do not fill them; each owns its loop | sigmas in `transformer_options`; **no step index**, and multi-call samplers break "one step = one call" |
-| `request_local_state` | no request object reaches the DiT; one runner batch plays the role | no request at all; one sampling run plays the role ("run-local") |
+| `execution_local_state` | no request object reaches the DiT; one runner batch plays the role | no request at all; one sampling run plays the role |
 | `trunk_observe` | same edges: blocks loop, `norm_out` (Qwen `qwen_image_transformer.py:1264,1279`; FLUX.2 `flux2_transformer.py:992–1015`) | same edges: `post_input` patch, `norm_out` / `final_layer` |
 | `trunk_output_override` | **already exists**: its TeaCache replaces `forward` through per-model "extractors" (`cache/teacache/extractors.py`), a Binding in all but name; FLUX.2 residual is image-only like ours | no whole-stack patch; per-block replacement patches on every block, or a wrapper around `forward_orig` |
 | `signal_observe` | same signal, first-block modulated input | recomputable from a block-0 replacement patch |

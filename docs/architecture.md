@@ -1,13 +1,14 @@
 # Architecture
 
-Status: current · last substantive update 2026-10-01
+Status: current · last substantive update 2026-10-02
 
 This is the current design, and the place where its terms are defined. Why
 each part is shaped this way is in the ADRs
 ([0008](adr/0008-capability-layer.md), [0009](adr/0009-lifecycle-constraints.md),
 [0010](adr/0010-v1-capabilities-and-first-techniques.md),
 [0011](adr/0011-split-step-control.md),
-[0012](adr/0012-trunk-capabilities.md)). The evidence from
+[0012](adr/0012-trunk-capabilities.md),
+[0013](adr/0013-feasibility-and-engagement.md)). The evidence from
 SGLang's code is in the [investigation](architecture-investigation.md).
 
 ## In short
@@ -15,8 +16,8 @@ SGLang's code is in the [investigation](architecture-investigation.md).
 - The optimizer picks **techniques**, like "TeaCache" or "FP8". It never
   needs to know how an engine or a model is built.
 - Each technique has one or more **implementations**. An implementation says
-  which abstract **capabilities** it needs, for example "control each
-  denoising step" or "run or replay the transformer trunk".
+  which abstract **capabilities** it needs, for example "override a denoising
+  step's prediction" or "replace the transformer trunk's output".
 - A **target** is one engine running one model, such as SGLang running
   Qwen-Image. It answers those needs from three places:
   - what the engine does for every model (**EngineAdapter**);
@@ -25,6 +26,11 @@ SGLang's code is in the [investigation](architecture-investigation.md).
 - Each capability is answered by whichever place can provide it. This
   **capability resolution** is why a simple technique never touches
   model-specific code.
+- Being provided is not enough. Before a run, a **feasibility check** asks
+  whether the capabilities are usable in the **execution mode** the engine
+  actually applied (eager, compiled, graph-replayed). After a run,
+  **engagement verification** asks whether the optimization really executed.
+  Only an engaged run is a measurement.
 
 ## The picture
 
@@ -32,61 +38,85 @@ SGLang's code is in the [investigation](architecture-investigation.md).
 flowchart TB
     OPT["<b>Optimizer</b><br/>chooses techniques + conceptual params"]
     TEC["<b>Technique</b><br/>what: concept + conceptual param schema"]
-    IMP["<b>Implementation</b><br/>how: requires · constraints · owns · engaged()"]
-    CAP["<b>Capability API</b><br/>step_observe · step_prediction_override · step_schedule_mutate ·<br/>timestep_state · request_local_state · trunk_observe · trunk_output_override ·<br/>signal_observe · compile_control · engine_feature.*<br/>optional: block_access · linear_access · attention_access"]
-    RES["<b>Capability resolution</b><br/>which layer provides each requirement, through which seam"]
+    IMP["<b>Implementation</b><br/>requires · lifecycle constraints · owns · engaged()"]
+    RES["<b>Capability resolution</b><br/>which layer provides each capability, through which seam"]
     subgraph TGT["Target = one engine × one model"]
         EA["<b>EngineAdapter</b><br/>how this engine works<br/>e.g. SGLangAdapter"]
         BD["<b>Binding</b><br/>where this model lives in this engine<br/>e.g. SGLangQwenBinding"]
         MS["<b>ModelSpec</b><br/>what this model is<br/>e.g. QwenImageSpec"]
         EA ~~~ BD ~~~ MS
     end
-    COMP["<b>Composer</b><br/>owns-conflicts · constraints vs target modes"]
-    RT["<b>Concrete runtime</b><br/>seams: plugin hooks · launch args · request params"]
-    CORE["<b>Core</b><br/>launch · measure · gate · measurement history"]
+    FEAS["<b>Feasibility check</b><br/>lifecycle · execution mode · ownership conflicts"]
+    RUN["<b>Install and run</b><br/>plugin hooks · launch args · request params"]
+    ENG{"<b>Engaged?</b><br/>runtime evidence"}
+    MEAS["<b>Measure</b><br/>speed · quality gate → measurement history"]
+    BAD["<b>Recorded as a status</b><br/>UNSUPPORTED · INFEASIBLE ·<br/>RUNTIME_ERROR · NOT_ENGAGED"]
 
-    OPT --> TEC --> IMP -- requires --> CAP --> RES
-    RES -- "native path: engine_feature.*" --> EA
-    RES -- "generic path: standard capabilities" --> EA
-    RES -- "generic path: model-bound capabilities" --> BD
-    MS -. semantics .-> BD
-    RES --> COMP --> RT
-    EA -- seams --> RT
-    BD -- seams --> RT
-    RT --> CORE -- "results + empirical knowledge" --> OPT
+    OPT --> TEC --> IMP -- "capability requirements" --> RES
+    RES --- TGT
+    RES -- resolved --> FEAS
+    FEAS -- feasible --> RUN --> ENG
+    ENG -- yes --> MEAS -- VALID --> OPT
+    RES -- unresolved --> BAD
+    FEAS -- infeasible --> BAD
+    RUN -- crashed --> BAD
+    ENG -- no --> BAD
+    BAD --> OPT
 ```
 
 ## A walk through one example
 
-Follow **TeaCache on Qwen-Image in SGLang** from top to bottom:
+This is the canonical example: **TeaCache in SGLang**, on Qwen-Image-2.1 or
+FLUX.2-klein. Everything below except the measured numbers was exercised in
+[experiment 002](../experiments/002-trunk-control/README.md).
 
-1. The **optimizer** chooses technique `teacache` with a threshold.
-2. The implementation `fractalyze-teacache` says it needs four capabilities:
-   - the current step and timestep;
-   - somewhere to keep state for this request;
-   - a way to observe the transformer trunk and replace its result;
-   - a cheap signal that predicts whether the trunk's output will change.
-3. **Resolution** finds who provides each one:
-   - The step, timestep and request state are the same for every model in
-     SGLang, so **SGLangAdapter** provides them.
-   - The trunk and the signal live in different places in every model, so
-     **SGLangQwenBinding** provides them. It knows that Qwen's trunk is the
-     `transformer_blocks` loop, that its first call fills a prefix cache and
-     must always run, and that the signal is the first block's
-     modulation.
-   - **QwenImageSpec** contributes what is true of Qwen in any engine: it
-     uses true CFG, so TeaCache keeps separate state per CFG branch.
-4. The **composer** checks the combination. TeaCache makes decisions inside
-   the transformer, so it is refused if graph capture is on.
-5. The concrete runtime runs it. SGLang loads our plugin in its GPU worker,
-   and the plugin attaches at the seams the adapter and binding named.
-6. **Core** measures speed and quality, checks that TeaCache really skipped
-   steps, and records the result. The optimizer uses it to pick the next try.
+1. **Technique.** The optimizer chooses `teacache` with a threshold.
+2. **Implementation.** `fractalyze-teacache` requires:
+   - `timestep_state`: the current step and how many there are;
+   - `execution_local_state`: state for this request and CFG branch only;
+   - `signal_observe`: a cheap signal that predicts whether the trunk's
+     output will change;
+   - `trunk_observe` and `trunk_output_override`: see every trunk call, and
+     on a reuse, supply the stored result instead of running the trunk.
+3. **Resolution.**
+   - **SGLangAdapter** provides the step, the timestep, the per-item state, and
+     the mechanics shared by every model: opening a trunk call, stopping blocks
+     from running, replacing the trunk's output, packing payloads.
+   - **SGLangQwenBinding** provides where Qwen-Image-2.1's trunk starts and ends
+     (the `transformer_blocks` loop; the output norm), what a skipped block
+     returns, the signal (the first block's modulated input), and one invariant:
+     the first call fills a prefix cache, so it must always run.
+   - **SGLangFluxBinding** provides the same for FLUX.2: double-stream blocks,
+     a one-time join, single-stream blocks, then the output norm.
+   - **ModelSpec** contributes what is true in any engine, e.g. FLUX.2 uses true
+     CFG, so state is kept per branch.
+4. **Feasibility** ([ADR 0013](adr/0013-feasibility-and-engagement.md)).
+   `trunk_output_override` is a *decide* capability whose seam is inside the
+   model's forward, so the execution mode matters:
 
-Step skip, by contrast, needs only to observe steps, override a step's
-prediction, and keep request state. It resolves
-entirely in SGLangAdapter and never touches a Binding. That difference is the
-point of resolution.
+   | Applied mode | Trunk seams are | Qwen-Image-2.1 | FLUX.2 |
+   |---|---|---|---|
+   | eager | `live` | feasible | feasible |
+   | regional compile | `traced` | feasible (identity check passed) | not offered by SGLang |
+   | whole-model compile | `traced` | feasible (identity check passed) | **infeasible** (identity check failed) |
+   | breakable CUDA graphs | `bypassed` | **infeasible** | not offered by SGLang |
+
+   Lifecycle: the hooks must be in place before the model is built
+   (`mutates_model`), and state is set up per item (`request_state`).
+   Conflicts: TeaCache owns the trunk, so cache-dit cannot run with it.
+5. **Run.** SGLang loads the plugin in its GPU worker; the hooks attach at the
+   seams the adapter and Binding named.
+6. **Engagement.** TeaCache's `engaged()` checks, from the adapter's counters,
+   that it saw every trunk call of the request and that on every reuse it
+   decided, the trunk's blocks did not run. Under graph replay it saw 1 call
+   of 40, so the run is `NOT_ENGAGED`, not a "no speedup" result.
+7. **Measure.** Only a `VALID` run is measured for speed and quality and
+   recorded; the threshold that worked is measurement history, per model.
+
+Step skip, by contrast, needs only `step_observe`,
+`step_prediction_override` and per-item state. It resolves entirely in
+SGLangAdapter, never touches a Binding, and its seams stay `live` in every mode
+tested. That difference is the point of resolution.
 
 ## Terms
 
@@ -128,6 +158,23 @@ where a logical part, like "the trunk", lives in that engine's version of the
 model, and translates the engine's native state into a capability's standard
 form. It sits between EngineAdapter and ModelSpec and replaces neither.
 Example: `SGLangQwenBinding`.
+
+**Execution mode.** How the engine actually runs the model for this target:
+for SGLang, the compile scope and the graph mode it *applied*, read back from
+the engine rather than taken from the request. It is private to the
+EngineAdapter.
+
+**Interception state.** What happens, in the current execution mode, to code
+placed at one seam: `live` (runs as Python on every call), `traced` (runs
+inside compiled code), or `bypassed` (the call is replayed from a recording
+and the seam never runs). This is the only execution-mode fact implementations
+depend on, through feasibility.
+
+**Feasible / engaged.** *Supported* means every required capability resolves
+on the target. *Feasible* means it is also usable in the applied execution
+mode, with lifecycle needs met and no ownership conflict. *Engaged* means the
+run's own evidence shows the optimization executed. Configuration proves none
+of these.
 
 **Measurement history.** Everything learned by measuring: good thresholds,
 fitted coefficients, layers that are sensitive to precision, the quality cost
@@ -183,42 +230,64 @@ Every field is here because a real problem in SGLang's code needs it.
 | `id`, `technique` | which technique this realizes | one technique can have a native and a generic implementation |
 | `kind` | native or generic | they are selected and verified differently |
 | `params` | the technique's conceptual parameters, plus its own extras | TeaCache's threshold is conceptual; its coefficients are model-specific |
-| `requires` | the capabilities it needs | decides whether it can run on a target at all |
-| `constraints` | when it must be installed and what it can survive (three flags, [ADR 0009](adr/0009-lifecycle-constraints.md)) | some changes must precede compilation; some decisions vanish under graph capture |
+| `requires` | the capabilities it needs; each capability is an *observe* or a *decide* kind | decides whether it can run on a target at all, and in which execution modes |
+| `constraints` | lifecycle needs: `mutates_model`, `request_state` ([ADR 0009](adr/0009-lifecycle-constraints.md)) | some changes must precede compilation; some need setup and cleanup per item |
 | `owns` | resources it needs exclusively | FP8 and NVFP4 both want the linear layers; TeaCache and cache-dit both want the trunk |
-| `engaged()` | evidence that it really ran | an optimization that silently did nothing must not report a speedup |
+| `engaged(evidence)` | a verdict and reason, from counters the adapter reports | an optimization that silently did nothing must not report a speedup |
 
-There is deliberately no list of supported targets. Resolution computes
-that, so nobody maintains it by hand.
+**Execution-mode constraints are not declared.** They follow from `requires`:
+an *observe* capability needs its seam not `bypassed`; a *decide* capability
+needs it `live`, or `traced` with a passed identity check
+([ADR 0013](adr/0013-feasibility-and-engagement.md)). A generic implementation
+therefore never names an engine flag such as "graph capture off".
+
+There is deliberately no list of supported targets. Resolution and feasibility
+compute that, so nobody maintains it by hand.
 
 ### Choosing between implementations
 
-1. Drop every implementation whose capabilities this target cannot provide.
-2. Default order:
+1. Drop every implementation whose capabilities this target cannot provide
+   (`UNSUPPORTED`).
+2. Drop every implementation that is not feasible in the applied execution
+   mode, with its lifecycle needs and the other chosen implementations
+   (`INFEASIBLE`).
+3. Default order among the rest:
    1. a native implementation that has already **passed the quality gate on
       this target**;
    2. a generic implementation;
    3. any other native implementation.
-3. Nothing left means the technique is unsupported on this target.
+4. Nothing left means the technique cannot run on this target in this mode.
 
 This is a default, not a law. When both a native and a generic version
-resolve, the optimizer can measure both.
+remain, the optimizer can measure both.
+
+### Every run ends in one status
+
+| Status | Means |
+|---|---|
+| `UNSUPPORTED` | a required capability cannot be resolved |
+| `INFEASIBLE` | lifecycle, execution mode or an ownership conflict rules it out |
+| `RUNTIME_ERROR` | it crashed |
+| `NOT_ENGAGED` | it ran, but its evidence does not show the optimization executed |
+| `VALID` | engaged; the only status that becomes a speed and quality data point |
+
+`NOT_ENGAGED` keeps "configured but never executed" apart from "executed and
+gave no speedup", which the optimizer's search depends on.
 
 ## Three techniques, resolved
 
 | | Step skip | TeaCache | FP8 linear |
 |---|---|---|---|
 | **Implementation** | `fractalyze-step-skip` (generic) | `fractalyze-teacache` (generic) | `sglang-native-fp8` (native) |
-| **Needs** | step observe, step prediction override, request state | timestep, request state, trunk observe, trunk output override, signal observe | the engine's FP8 feature |
+| **Needs** | step observe, step prediction override, per-item state | timestep, per-item state, trunk observe, trunk output override, signal observe | the engine's FP8 feature |
 | **Provided by** | SGLangAdapter only | SGLangAdapter + per-model Binding | SGLangAdapter only |
 | **Model-specific code** | none | where the trunk and signal are | none |
 | **Installed** | per request; no reload | hooks at the trunk's edges before the model is built; state per request and CFG branch | at server launch |
 | **Decides** | every step, outside the transformer | every step, inside the transformer | never (static) |
-| **Constraints** | `request_state` | `mutates_model`, `dynamic_in_forward`, `request_state` | `mutates_model` |
+| **Lifecycle constraints** | `request_state` | `mutates_model`, `request_state` | `mutates_model` |
 | **Exclusive resource** | the step's prediction | the trunk | the linear layers |
-| **Graph capture** | safe (verified on Qwen-Image-2.1, [exp 001](../experiments/001-step-control/README.md)) | refused (verified: replay never runs the hooks, [exp 002](../experiments/002-trunk-control/README.md)) | handled by the engine |
-| **torch.compile** | unaffected | needs regional compile, which FLUX.2 in SGLang lacks ([exp 002](../experiments/002-trunk-control/README.md)) | handled by the engine |
-| **How we check it ran** | count skipped steps | count trunk blocks that did not run | count FP8 layers in the live model |
+| **Feasible in (SGLang)** | every mode tested ([exp 001](../experiments/001-step-control/README.md)) | eager; compiled where the identity check passed; never under graph replay ([exp 002](../experiments/002-trunk-control/README.md)) | handled by the engine |
+| **Engaged when** | DiT calls fell by the reuses decided | every trunk call seen, and blocks did not run on every reuse decided | the live model's linears report FP8 |
 
 The decomposition is natural for all three. It gets harder the moment we
 want *selective* FP8, keeping some layers in full precision. That needs a
@@ -228,21 +297,21 @@ just an engine flag.
 
 ## Capabilities in V1
 
-| Capability | Status | In SGLang, provided by | …at this seam |
-|---|---|---|---|
-| `step_observe` | common | SGLangAdapter | `_run_denoising_step` (`denoising.py:1626`) |
-| `step_prediction_override` | common | SGLangAdapter | `_predict_noise_with_cfg` (`denoising.py:2195`) |
-| `step_schedule_mutate` | common | SGLangAdapter | `TimestepPreparationStage.forward` (`timestep_preparation.py:78`) |
-| `timestep_state` | common | SGLangAdapter | step state; forward context |
-| `request_local_state` | common | SGLangAdapter | the request object; which CFG branch is running |
-| `trunk_observe` | common, per Binding | SGLangAdapter + Binding | first block call (entry) and the output norm's input (exit) |
-| `trunk_output_override` | common, per Binding | SGLangAdapter + Binding | the same edges; blocks return their identity while overridden |
-| `signal_observe` | common, per Binding | Binding | e.g. the first block's modulated image input |
-| `engine_feature.*` | per engine | SGLangAdapter | launch flags, environment, per-request switches |
-| `compile_control` | per engine | SGLangAdapter | compile and graph-capture flags |
-| `block_access` | **optional** | Binding, if it can | the target's own block list and signature |
-| `linear_access` | **optional** | SGLangAdapter + Binding | swappable `quant_method` + named layer groups |
-| `attention_access` | **optional** | SGLangAdapter | attention backend selector |
+| Capability | Kind | Status | In SGLang, provided by | …at this seam |
+|---|---|---|---|---|
+| `step_observe` | observe | common | SGLangAdapter | `_run_denoising_step` (`denoising.py:1626`) |
+| `step_prediction_override` | decide | common | SGLangAdapter | `_predict_noise_with_cfg` (`denoising.py:2195`) |
+| `step_schedule_mutate` | decide | common | SGLangAdapter | `TimestepPreparationStage.forward` (`timestep_preparation.py:78`) |
+| `timestep_state` | observe | common | SGLangAdapter | step state; forward context |
+| `execution_local_state` | — | common | SGLangAdapter | the request object, keyed by CFG branch where needed |
+| `trunk_observe` | observe | common, per Binding | SGLangAdapter + Binding | first block call (entry) and the output norm's input (exit) |
+| `trunk_output_override` | decide | common, per Binding | SGLangAdapter + Binding | the same edges; blocks return their identity while overridden |
+| `signal_observe` | observe | common, per Binding | Binding | e.g. the first block's modulated image input |
+| `engine_feature.*` | — | per engine | SGLangAdapter | launch flags, environment, per-request switches |
+| `compile_control` | — | per engine | SGLangAdapter | compile and graph-capture flags |
+| `block_access` | — | **optional** | Binding, if it can | the target's own block list and signature |
+| `linear_access` | — | **optional** | SGLangAdapter + Binding | swappable `quant_method` + named layer groups |
+| `attention_access` | — | **optional** | SGLangAdapter | attention backend selector |
 
 "Optional" means a target may not provide it, in which case implementations
 that need it are unsupported there. It does not mean the idea was rejected.
@@ -250,18 +319,50 @@ Block-level access in particular is expected to be needed later, for
 selective block caching, block skipping and per-block precision. It just has
 no shared signature across models.
 
+**Interception states in SGLang**, as measured:
+
+| Seam | eager | regional compile | whole-model compile | breakable CUDA graphs |
+|---|---|---|---|---|
+| step seams (denoising loop) | `live` | `live` (code reading: only the blocks are compiled) | `live` | `live` |
+| trunk edges (inside the DiT forward) | `live` | `traced` | `traced` | `bypassed`, except calls that fall back to eager |
+
+Every cell except the one marked was measured in experiments
+[001](../experiments/001-step-control/README.md) and
+[002](../experiments/002-trunk-control/README.md).
+
+## What a Binding may contain
+
+A Binding is small and declarative, and that is an invariant, not a style
+preference. It may contain:
+
+- where a logical part, such as the trunk, starts and ends in this engine's
+  version of the model;
+- how the model's structures map to and from the generic forms (e.g. what a
+  block returns when told not to compute);
+- where a signal can be read, and how to compute it from the model's own
+  inputs;
+- invariants true only of this engine × model (e.g. Qwen-Image-2.1's first
+  trunk call must always run).
+
+It must not contain worker or request lifecycle, generic per-item state,
+payload arithmetic, compile or graph-capture policy, benchmarking, or
+engagement counting. When a Binding needs something a second model in the same
+engine would also need, that code belongs in the EngineAdapter. A Binding that
+keeps growing is turning into a god object. In
+[experiment 002](../experiments/002-trunk-control/README.md) each Binding was a
+list of class paths and four short functions.
+
 ## What is settled, what is open
 
-**Settled by the investigation** (decisions and rejected alternatives are in
-the ADRs):
+**Settled** (decisions and rejected alternatives are in the ADRs):
 - Implementations depend on capabilities, never on seams.
   [ADR 0008](adr/0008-capability-layer.md)
 - EngineAdapter, ModelSpec and Binding are separate.
   [ADR 0008](adr/0008-capability-layer.md)
 - Measured values live in measurement history, not in ModelSpec.
   [ADR 0008](adr/0008-capability-layer.md)
-- Implementations declare three constraints; SGLang's lifecycle stages stay
-  inside SGLangAdapter. [ADR 0009](adr/0009-lifecycle-constraints.md)
+- Implementations declare two lifecycle constraints; SGLang's lifecycle
+  stages stay inside SGLangAdapter. [ADR 0009](adr/0009-lifecycle-constraints.md)
 - Block access is optional and target-specific, not rejected.
   [ADR 0010](adr/0010-v1-capabilities-and-first-techniques.md)
 - Step control needs no Binding, and is three capabilities: observe, override
@@ -269,29 +370,43 @@ the ADRs):
   because it desyncs the scheduler. All three survive graph capture.
   [ADR 0011](adr/0011-split-step-control.md),
   [experiment 001](../experiments/001-step-control/README.md)
-- Trunk control needs a per-model Binding, and is three capabilities defined
-  at the trunk's edges: observe, override the output, observe the signal. One
-  generic implementation served Qwen-Image-2.1 and FLUX.2; it needs a compile
-  mode that leaves the trunk loop in Python, and graph replay rules it out.
+- Trunk control needs a small per-model Binding and is three capabilities
+  defined at the trunk's edges. Runtime evidence supports, for Qwen-Image-2.1
+  and FLUX.2 in SGLang:
+  1. one generic implementation works on both models;
+  2. Bindings isolate the structural differences;
+  3. whole-trunk operations travel better than a shared per-block interface;
+  4. capabilities name operations, not hook mechanisms;
+  5. the EngineAdapter / Binding split holds.
   [ADR 0012](adr/0012-trunk-capabilities.md),
   [experiment 002](../experiments/002-trunk-control/README.md)
+- Feasibility includes the applied execution mode, and a run is a measurement
+  only if it engaged. [ADR 0013](adr/0013-feasibility-and-engagement.md)
 
 **Open until an experiment answers it:**
-- Can trunk override and the signal work when one model call serves several
-  requests or CFG branches, as in vLLM-Omni and ComfyUI?
+- **Logical ownership under batching.** When one model call serves several
+  requests or CFG branches (vLLM-Omni batches requests; ComfyUI batches cond
+  and uncond), can override, payload and signal act per item, and does
+  `signal_observe` need a structured view that says which slice belongs to
+  whom? To inspect later: in vLLM-Omni, request batching, per-request
+  policies, how one call represents several requests; in ComfyUI, cond/uncond
+  batching, ModelPatcher semantics, node-level versus forward-level control.
+- Are three interception states enough for a second engine?
 - Does a real cache policy built on these capabilities pay off, and with what
   thresholds per model?
 - Does linear replacement need a Binding in practice?
-- What capabilities does ComfyUI need, given that it executes node graphs?
 
 The experiments that test these are listed, cheapest-to-falsify first, in the
 [investigation](architecture-investigation.md#open-items).
 
 **Deliberately not generalized yet:**
-- **Lifecycle.** There is no cross-engine lifecycle model, only three
+- **Lifecycle.** There is no cross-engine lifecycle model, only two
   constraint flags that each adapter maps onto its own lifecycle.
+- **Execution mode.** There is no universal mode hierarchy. Each adapter keeps
+  its own record of what the engine applied; only interception states are
+  shared.
 - **Blocks.** There is no universal block signature, and V1 has no
   block-level technique.
-- **vLLM-Omni and ComfyUI.** No adapter exists beyond the rule "provide
-  capabilities through seams". How many capabilities they can provide is an
-  experiment, not an assumption.
+- **vLLM-Omni and ComfyUI.** No adapter exists. A code reading found a
+  plausible seam for every capability in both; how many they can provide at
+  runtime is an experiment, not an assumption.
