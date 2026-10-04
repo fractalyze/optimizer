@@ -41,3 +41,4 @@ history of the design is visible.
 | [0013](0013-feasibility-and-engagement.md) | Execution feasibility and engagement verification are stages every implementation passes | accepted |
 | [0014](0014-batched-execution-owners.md) | In a batched model call, the EngineAdapter maps rows to owners; savings need agreement | accepted; extended to a second engine by 0015 |
 | [0015](0015-owners-at-different-steps.md) | Owners in one model call may be at different steps; step state and batch composition are per owner and per measurement | accepted |
+| [0016](0016-native-implementations.md) | A native implementation is configuration plus an engagement check; the adapter owns the engine's silent fallbacks | accepted |

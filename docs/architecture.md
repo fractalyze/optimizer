@@ -152,7 +152,9 @@ cache-dit's block cache is not "TeaCache".
 
 **Implementation.** One concrete way to realize a technique. It is either:
 - **native:** it switches on a feature the engine already has, e.g.
-  `sglang-native-fp8`;
+  `sglang-native-fp8-w8a8`. It needs one `engine_feature.*` capability and
+  no Binding; what makes it hard is that one engine flag can run more than
+  one method ([ADR 0016](adr/0016-native-implementations.md));
 - **generic:** our own code, written against capabilities, e.g.
   `fractalyze-teacache`.
 
@@ -305,16 +307,16 @@ and the optimizer must never learn from it as if it were.
 
 | | Step skip | TeaCache | FP8 linear |
 |---|---|---|---|
-| **Implementation** | `fractalyze-step-skip` (generic) | `fractalyze-teacache` (generic) | `sglang-native-fp8` (native) |
-| **Needs** | step observe, step prediction override, request state | timestep, request state, trunk observe, trunk output override, signal observe | the engine's FP8 feature |
+| **Implementation** | `fractalyze-step-skip` (generic) | `fractalyze-teacache` (generic) | `sglang-native-fp8-w8a8` (native) |
+| **Needs** | step observe, step prediction override, request state | timestep, request state, trunk observe, trunk output override, signal observe | `engine_feature.fp8_w8a8_dynamic_linear` |
 | **Provided by** | SGLangAdapter only | SGLangAdapter + per-model Binding | SGLangAdapter only |
 | **Model-specific code** | none | where the trunk and signal are | none |
 | **Installed** | per request; no reload | hooks at the trunk's edges before the model is built; state per request and CFG branch | at server launch |
 | **Decides** | every step, outside the transformer | every step, inside the transformer | never (static) |
 | **Lifecycle constraints** | `request_state` | `mutates_model`, `request_state` | `mutates_model` |
 | **Exclusive resource** | the step's prediction | the trunk | the linear layers |
-| **Feasible in (SGLang)** | every mode tested ([exp 001](../experiments/001-step-control/README.md)) | eager; compiled where the identity check passed; never under graph replay ([exp 002](../experiments/002-trunk-control/README.md)) | handled by the engine |
-| **Engaged when** | DiT calls fell by the reuses decided | every trunk call seen, and blocks did not run on every reuse decided | the live model's linears report FP8 |
+| **Feasible in (SGLang)** | every mode tested ([exp 001](../experiments/001-step-control/README.md)) | eager; compiled where the identity check passed; never under graph replay ([exp 002](../experiments/002-trunk-control/README.md)) | sm ≥ 89 (CUDA ≥ 12.4 on sm_89) and no engine setting that forces weight-only or drops layers ([exp 005](../experiments/005-native-fp8/README.md)) |
+| **Engaged when** | DiT calls fell by the reuses decided | every trunk call seen, and blocks did not run on every reuse decided | every quantizable linear is FP8 W8A8 (none weight-only, none left 16-bit), and FP8 GEMMs and activation quantizations ran |
 
 The decomposition is natural for all three. It gets harder the moment we
 want *selective* FP8, keeping some layers in full precision. That needs a
@@ -420,6 +422,13 @@ list of class paths and four short functions.
   owner; row identity is read wherever the engine keeps it; batch composition
   is recorded with every measurement.
   [ADR 0015](adr/0015-owners-at-different-steps.md)
+- A Technique names a numerical method, not an engine flag. A native
+  implementation is one `engine_feature.*` capability plus an engagement check
+  of the method and its coverage, with no Binding; the EngineAdapter's
+  feasibility owns the engine's silent fallbacks; a technique applied at load
+  is part of the model's identity.
+  [ADR 0016](adr/0016-native-implementations.md),
+  [experiment 005](../experiments/005-native-fp8/README.md)
 
 **Evidence behind the settled items**, kept visibly apart:
 - *Runtime validated* (SGLang, Qwen-Image-2.1 and FLUX.2-klein, experiments
@@ -432,6 +441,10 @@ list of class paths and four short functions.
   control in SGLang (Qwen-Image-2.1, FLUX.2-klein) and in vLLM-Omni
   (Qwen-Image-2512, eager only, a spike adapter on private runner methods),
   with the implementation unchanged.
+- *Runtime validated for a native implementation* (experiment 005, SGLang,
+  both models, eager, one sm_120 GPU): native FP8 W8A8 engaged on every
+  quantizable layer with no glue; forced weight-only and partial coverage were
+  caught as `INFEASIBLE` or `FAILED_TO_ENGAGE`; FP8 composed with trunk control.
 - *Code reading only:* everything about ComfyUI, and vLLM-Omni beyond trunk
   control on Qwen-Image (step capabilities, compile, other models).
 
