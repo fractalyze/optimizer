@@ -427,13 +427,21 @@ architecture runs first. Each one names the claim it can break.
         other bitwise identical; compute is saved only when every row agrees;
         SGLang keeps no per-row request id. Recorded in
         [ADR 0014](adr/0014-batched-execution-owners.md).
-- [ ] **2c. The same holds on a second engine's batched calls.** vLLM-Omni
+- [x] **2c. The same holds on a second engine's batched calls.** vLLM-Omni
       batches requests; ComfyUI stacks cond and uncond as rows. Smallest
       runtime test that could falsify ADR 0014 on vLLM-Omni.
       - Falsified if per-row ownership needs a new capability or a change to
         the implementation, rather than a different seam in the adapter.
       - Also answers whether vLLM-Omni keeps a request id per row, and where
         per-request state can live there.
+      - **Done for vLLM-Omni requests**
+        ([experiment 004](../experiments/004-omni-batched-ownership/README.md)):
+        Qwen-Image-2512 batched in request and step mode, with owners at
+        different steps in one call; the implementation ran unchanged with a
+        new adapter and Binding; per-owner identity, reuse and skip held; row
+        identity is kept in the model runner. Recorded in
+        [ADR 0015](adr/0015-owners-at-different-steps.md). CFG branches as
+        stacked rows (ComfyUI) remain untested.
 - [x] **3. Capabilities are not SGLang-shaped.** By code reading only, map
       the step capabilities, trunk control and `request_local_state` onto
       vLLM-Omni's and ComfyUI's Qwen-Image/FLUX paths.

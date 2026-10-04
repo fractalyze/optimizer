@@ -9,7 +9,8 @@ each part is shaped this way is in the ADRs
 [0011](adr/0011-split-step-control.md),
 [0012](adr/0012-trunk-capabilities.md),
 [0013](adr/0013-feasibility-and-engagement.md),
-[0014](adr/0014-batched-execution-owners.md)). The evidence from
+[0014](adr/0014-batched-execution-owners.md),
+[0015](adr/0015-owners-at-different-steps.md)). The evidence from
 SGLang's code is in the [investigation](architecture-investigation.md).
 
 ## In short
@@ -413,8 +414,12 @@ list of class paths and four short functions.
   measurement. [ADR 0013](adr/0013-feasibility-and-engagement.md)
 - In a batched call the EngineAdapter maps rows to owners; a decision by some
   owners is spliced, compute is saved only when all agree, and engagement is
-  per owner. Runtime-validated in SGLang only.
+  per owner. Runtime-validated in SGLang and vLLM-Omni.
   [ADR 0014](adr/0014-batched-execution-owners.md)
+- Owners in one call may be at different steps, so `timestep_state` is per
+  owner; row identity is read wherever the engine keeps it; batch composition
+  is recorded with every measurement.
+  [ADR 0015](adr/0015-owners-at-different-steps.md)
 
 **Evidence behind the settled items**, kept visibly apart:
 - *Runtime validated* (SGLang, Qwen-Image-2.1 and FLUX.2-klein, experiments
@@ -423,17 +428,19 @@ list of class paths and four short functions.
   compile kept the tested interception exact; whole-model compile caused
   concrete problems; graph replay bypassed the trunk interception; block
   counts detect whether trunk reuse engaged.
-- *Code reading only:* every mapping onto vLLM-Omni and ComfyUI. None of it is
-  runtime-validated portability.
+- *Runtime validated under batching* (experiments 003 and 004): per-owner trunk
+  control in SGLang (Qwen-Image-2.1, FLUX.2-klein) and in vLLM-Omni
+  (Qwen-Image-2512, eager only, a spike adapter on private runner methods),
+  with the implementation unchanged.
+- *Code reading only:* everything about ComfyUI, and vLLM-Omni beyond trunk
+  control on Qwen-Image (step capabilities, compile, other models).
 
 **Open until an experiment answers it:**
-- **Logical ownership under batching, beyond SGLang.** In SGLang the adapter
-  maps batch rows to owners, the implementation and Bindings stay unchanged,
-  and a reuse saves compute only when every row agrees
+- **CFG branches as stacked rows.** Per-owner control under batching held in
+  SGLang and vLLM-Omni, including owners at different steps
   ([ADR 0014](adr/0014-batched-execution-owners.md),
-  [experiment 003](../experiments/003-batched-ownership/README.md)). Whether
-  that holds where rows are CFG branches (ComfyUI) or under vLLM-Omni's request
-  batching is untested.
+  [ADR 0015](adr/0015-owners-at-different-steps.md)); ComfyUI's one-call
+  cond/uncond, and batching under compile, are untested.
 - **The final ownership model of `request_local_state`:** request × CFG branch,
   mapped onto batch rows in SGLang; no request at all (ComfyUI) untested.
 - **The final cross-engine execution-mode model:** are two execution
@@ -453,6 +460,6 @@ The experiments that test these are listed, cheapest-to-falsify first, in the
   requirements are shared.
 - **Blocks.** There is no universal block signature, and V1 has no
   block-level technique.
-- **vLLM-Omni and ComfyUI.** No adapter exists. A code reading found a
-  plausible seam for every capability in both; how many they can provide at
-  runtime is an experiment, not an assumption.
+- **vLLM-Omni and ComfyUI.** No real adapter exists. Experiment 004's spike
+  provided trunk control on vLLM-Omni at runtime; ComfyUI and the rest of
+  vLLM-Omni are code reading only.
