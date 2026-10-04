@@ -25,13 +25,13 @@ def _resolve(implementation_id, target, providers=None):
 
 class ValidatedPathsTest(absltest.TestCase):
 
-    def test_engine_common_step_resolves_in_adapter_only(self):
-        r = _resolve("fractalyze-step-skip", SGLANG_QWEN)
+    def test_engine_common_prediction_reuse_resolves_in_adapter_only(self):
+        r = _resolve("fractalyze-prediction-reuse", SGLANG_QWEN)
         self.assertEqual(r.status, Status.RESOLVED)
         self.assertEqual(set(r.providers.values()), {"SGLangAdapter"})
 
-    def test_engine_common_step_needs_no_binding(self):
-        r = _resolve("fractalyze-step-skip", Target("sglang", "a-model-with-no-binding"))
+    def test_engine_common_prediction_reuse_needs_no_binding(self):
+        r = _resolve("fractalyze-prediction-reuse", Target("sglang", "a-model-with-no-binding"))
         self.assertEqual(r.status, Status.RESOLVED)
 
     def test_trunk_reuse_splits_across_adapter_and_qwen_binding(self):

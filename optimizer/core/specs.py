@@ -30,13 +30,12 @@ CAPABILITIES = frozenset({
     TRUNK_OBSERVE, TRUNK_OUTPUT_OVERRIDE, SIGNAL_OBSERVE,
 })
 
-# A feature the engine implements whole; the suffix names the technique it
-# realizes (ADR 0016), e.g. "engine_feature.fp8_w8a8_dynamic_linear".
+# Engine-native features: the engine implements the method whole (ADR 0016).
+# Any id under this prefix is accepted. FP8's id happens to match its
+# technique's; that is not a rule, and a native implementation may need
+# several such capabilities.
 ENGINE_FEATURE_PREFIX = "engine_feature."
-
-
-def engine_feature(technique_id: str) -> str:
-    return ENGINE_FEATURE_PREFIX + technique_id
+ENGINE_FEATURE_FP8_W8A8_DYNAMIC_LINEAR = ENGINE_FEATURE_PREFIX + "fp8_w8a8_dynamic_linear"
 
 
 def check_capability(capability: str) -> None:

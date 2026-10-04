@@ -11,7 +11,7 @@ from optimizer.core.registry import ImplementationRegistry, ProviderRegistry, Te
 from optimizer.core.specs import (
     REQUEST_LOCAL_STATE, SIGNAL_OBSERVE, STEP_OBSERVE, STEP_PREDICTION_OVERRIDE, STEP_SCHEDULE_MUTATE,
     TIMESTEP_STATE, TRUNK_OBSERVE, TRUNK_OUTPUT_OVERRIDE, ImplementationSpec, ProviderKind, ProviderSpec,
-    TechniqueSpec, engine_feature,
+    TechniqueSpec, ENGINE_FEATURE_FP8_W8A8_DYNAMIC_LINEAR,
 )
 
 PREDICTION_REUSE = "prediction_reuse"
@@ -37,14 +37,14 @@ TECHNIQUES = (
 
 IMPLEMENTATIONS = (
     # docs/architecture.md, "Three techniques, resolved".
-    ImplementationSpec("fractalyze-step-skip", PREDICTION_REUSE, frozenset({
+    ImplementationSpec("fractalyze-prediction-reuse", PREDICTION_REUSE, frozenset({
         STEP_OBSERVE, STEP_PREDICTION_OVERRIDE, REQUEST_LOCAL_STATE})),
     # The capabilities exp 002's policy consumes (opt_trunk_probe/policy.py).
     ImplementationSpec("fractalyze-teacache", TEACACHE, frozenset({
         TIMESTEP_STATE, REQUEST_LOCAL_STATE,
         TRUNK_OBSERVE, TRUNK_OUTPUT_OVERRIDE, SIGNAL_OBSERVE})),
     ImplementationSpec("sglang-native-fp8-w8a8", FP8_W8A8_DYNAMIC_LINEAR, frozenset({
-        engine_feature(FP8_W8A8_DYNAMIC_LINEAR)})),
+        ENGINE_FEATURE_FP8_W8A8_DYNAMIC_LINEAR})),
 )
 
 _TRUNK = frozenset({TRUNK_OBSERVE, TRUNK_OUTPUT_OVERRIDE, SIGNAL_OBSERVE})
@@ -54,7 +54,7 @@ PROVIDERS = (
     ProviderSpec("SGLangAdapter", ProviderKind.ENGINE_ADAPTER, "sglang", None, frozenset({
         STEP_OBSERVE, STEP_PREDICTION_OVERRIDE, STEP_SCHEDULE_MUTATE,
         TIMESTEP_STATE, REQUEST_LOCAL_STATE,
-        engine_feature(FP8_W8A8_DYNAMIC_LINEAR)})),
+        ENGINE_FEATURE_FP8_W8A8_DYNAMIC_LINEAR})),
     # exp 002 Bindings (opt_trunk_probe/bindings.py), batched in exp 003.
     ProviderSpec("SGLangQwenImage21Binding", ProviderKind.BINDING, "sglang", "qwen-image-2.1", _TRUNK),
     ProviderSpec("SGLangFlux2Binding", ProviderKind.BINDING, "sglang", "flux.2-klein", _TRUNK),
