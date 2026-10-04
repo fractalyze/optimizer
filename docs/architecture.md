@@ -13,7 +13,8 @@ each part is shaped this way is in the ADRs
 [0015](adr/0015-owners-at-different-steps.md),
 [0016](adr/0016-native-implementations.md),
 [0017](adr/0017-registries-and-capability-resolution.md),
-[0018](adr/0018-feasibility-in-core.md)). The evidence from
+[0018](adr/0018-feasibility-in-core.md),
+[0019](adr/0019-catalog-and-engine-policy-ownership.md)). The evidence from
 SGLang's code is in the [investigation](architecture-investigation.md).
 
 ## In short
@@ -58,7 +59,7 @@ flowchart TB
         MS["<b>ModelSpec</b><br/>what this model is<br/>e.g. QwenImageSpec"]
         EA ~~~ BD ~~~ MS
     end
-    FEAS["<b>Execution feasibility</b><br/>lifecycle · execution requirements in the applied mode · conflicts"]
+    FEAS["<b>Execution feasibility</b><br/>execution requirements in the applied mode<br/>(one implementation; conflicts are the composer's)"]
     RUN["<b>Install and run</b><br/>plugin hooks · launch args · request params"]
     ENG{"<b>Engagement verification</b><br/>runtime evidence"}
     MEAS["<b>Measurement</b><br/>speed · quality gate → measurement history"]
@@ -213,11 +214,12 @@ Feasible    the resolved implementation's known execution requirements can
 Engaged     runtime evidence proves the implementation actually executed
 ```
 
-Core computes the first two before anything is launched
-([ADR 0017](adr/0017-registries-and-capability-resolution.md),
-[ADR 0018](adr/0018-feasibility-in-core.md)); lifecycle and ownership
-conflicts join feasibility in the composer. Engagement is only ever read from
-a run.
+Core computes the first two before anything is launched, one implementation
+at a time ([ADR 0017](adr/0017-registries-and-capability-resolution.md),
+[ADR 0018](adr/0018-feasibility-in-core.md)). Feasibility involves no other
+implementation: lifecycle ordering and ownership conflicts between
+implementations are the composer's question. Engagement is only ever read
+from a run.
 
 **Measurement history.** Everything learned by measuring: good thresholds,
 fitted coefficients, layers that are sensitive to precision, the quality cost
@@ -310,7 +312,7 @@ remain, the optimizer can measure both.
 | Status | Means |
 |---|---|
 | `UNSUPPORTED` | a required capability cannot be resolved |
-| `INFEASIBLE` | lifecycle, an execution requirement in the applied mode, or an ownership conflict rules it out |
+| `INFEASIBLE` | an execution requirement in the applied mode rules it out (feasibility), or lifecycle or an ownership conflict with the other chosen implementations does (composer) |
 | `RUNTIME_ERROR` | it crashed |
 | `FAILED_TO_ENGAGE` | it ran, but its evidence does not show the optimization executed |
 | `VALID` | engaged; the only status that becomes a speed and quality data point |
@@ -374,6 +376,34 @@ no shared signature across models.
 Every cell except the one marked was measured in experiments
 [001](../experiments/001-step-control/README.md) and
 [002](../experiments/002-trunk-control/README.md).
+
+## Core code and the catalog
+
+```text
+Catalog       declares atomic things that exist: techniques, implementations, providers
+   ↓
+Registry      validates and indexes them
+   ↓
+Resolver      is one implementation supported by a target?
+   ↓
+Feasibility   can that resolved implementation run in this RuntimeContext?
+   ↓
+[Composer]    combines several feasible implementations; not built yet
+```
+
+**The catalog contains atomic building blocks only. Combinations are created
+dynamically by the composer.** No entry ever names "SGLang + Qwen + TeaCache
++ FP8"; the catalog grows by one entry per technique, implementation or
+provider. It does not say which implementation wins, whether anything is
+supported or feasible, what conflicts, or in what order things run
+([ADR 0019](adr/0019-catalog-and-engine-policy-ownership.md)).
+
+| Code | Owns |
+|---|---|
+| `optimizer/core/` | the capability vocabulary, metadata types, registries, resolution and the feasibility check; imports no engine and no catalog |
+| `optimizer/techniques.py` | techniques and our engine-free implementations |
+| `optimizer/engines/<engine>/` | that engine's providers and native implementations, and its evaluator with its runtime policy as explicit data |
+| `optimizer/catalog.py` | gathering the atomic entries from their owners |
 
 ## What a Binding may contain
 
