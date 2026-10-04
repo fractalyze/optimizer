@@ -19,6 +19,13 @@ Claude Code-specific rules for this repo:
 - SGLang: the upstream commit pinned in `docs/adr/0003-sglang-first-engine.md`.
   Cite file:line at that commit; moving the pin means amending that ADR.
 - Sol-Engine: `NVlabs/Sana`, branch `sol-engine`, @ `670482d`.
+- vLLM-Omni: `68003cf6a` (vLLM 0.30.0), the commit experiments 004 and 005
+  traced; moving it means amending ADR 0015.
 
 ## Git
 - Work lands through PRs; the user reviews on GitHub.
+- Commits follow `/workflow:commit`: `type(scope): summary` with a scope
+  (e.g. `optimizer`, `adr`), a body that says why, and no `Co-Authored-By`
+  trailer. Earlier history is unscoped; do not copy it.
+- Stacked PRs: never delete a base branch while a PR targets it; retarget the
+  child to `main`, rebase it onto `main`, and push with `--force-with-lease`.
