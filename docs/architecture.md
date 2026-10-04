@@ -191,8 +191,10 @@ Example: `SGLangQwenBinding`.
 
 **Execution mode.** How the engine actually runs the model for this target:
 for SGLang, the compile scope and the graph mode it *applied*, read back from
-the engine rather than taken from the request. It is private to the
-EngineAdapter.
+the engine rather than taken from the request. Core's `RuntimeContext` names
+the two facts SGLang's rules turn on, compile scope and graph replay, but what
+they imply is decided only by the engine's evaluator
+([ADR 0018](adr/0018-feasibility-in-core.md)).
 
 **Execution requirement.** A behavior an implementation needs from the
 runtime at one of its capabilities, stated without naming any engine setting.
@@ -280,6 +282,12 @@ Every field is here because a real problem in SGLang's code needs it.
 | `execution` | **C.** execution requirements on the capabilities it uses: `runs_every_invocation`, `override_exact` ([ADR 0013](adr/0013-feasibility-and-engagement.md)) | a capability that exists may still not execute correctly in the applied mode |
 | `owns` | resources it needs exclusively | FP8 and NVFP4 both want the linear layers; TeaCache and cache-dit both want the trunk |
 | `engaged(evidence)` | a verdict and reason, from counters the adapter reports | an optimization that silently did nothing must not report a speedup |
+
+In code so far, `ImplementationSpec` carries `id`, `technique`, `requires` and
+`execution` ([ADR 0017](adr/0017-registries-and-capability-resolution.md),
+[ADR 0018](adr/0018-feasibility-in-core.md)); the other fields arrive with the
+stages that consume them (composer: `constraints`, `owns`; engagement:
+`engaged`).
 
 **The implementation says what behavior it needs, the EngineAdapter says
 whether this mode gives it.** A generic implementation never names an engine
@@ -523,9 +531,10 @@ The experiments that test these are listed, cheapest-to-falsify first, in the
 **Deliberately not generalized yet:**
 - **Lifecycle.** There is no cross-engine lifecycle model, only three
   constraint flags that each adapter maps onto its own lifecycle.
-- **Execution mode.** There is no universal mode enum. Each adapter keeps its
-  own record of what the engine applied; only the implementations' execution
-  requirements are shared.
+- **Execution mode.** `RuntimeContext` names compile scope and graph replay,
+  the facts SGLang's rules read, but no meaning is shared: each engine's
+  evaluator decides what they imply. Revisit if a second engine's modes do not
+  fit them ([ADR 0018](adr/0018-feasibility-in-core.md)).
 - **Blocks.** There is no universal block signature, and V1 has no
   block-level technique.
 - **vLLM-Omni and ComfyUI.** No real adapter exists. Experiment 004's spike
