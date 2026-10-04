@@ -1,76 +1,20 @@
-"""The techniques, implementations and target providers with runtime evidence.
+"""The default catalog: every atomic entry, gathered from its owner.
 
-Every entry names the experiment that validated it. A capability is listed
-for a provider only where an experiment exercised it there; code reading alone
-is not enough (vLLM-Omni's step seams and native FP8 are therefore absent).
+It declares what exists and nothing more. It holds no combinations, no
+preference between implementations, and no feasibility or conflict rule;
+those are computed by the stages that consume it (ADR 0019).
 """
 
 from __future__ import annotations
 
-from optimizer.adapters.sglang import SGLangFeasibility
-from optimizer.core.feasibility import Evaluator
+from optimizer import techniques as engine_free
 from optimizer.core.registry import ImplementationRegistry, ProviderRegistry, TechniqueRegistry
-from optimizer.core.specs import (
-    REQUEST_LOCAL_STATE, SIGNAL_OBSERVE, STEP_OBSERVE, STEP_PREDICTION_OVERRIDE, STEP_SCHEDULE_MUTATE,
-    TIMESTEP_STATE, TRUNK_OBSERVE, TRUNK_OUTPUT_OVERRIDE, Behavior, ExecutionRequirement, ImplementationSpec,
-    ProviderKind, ProviderSpec, TechniqueSpec, ENGINE_FEATURE_FP8_W8A8_DYNAMIC_LINEAR,
-)
+from optimizer.engines.sglang import catalog as sglang
+from optimizer.engines.vllm_omni import catalog as vllm_omni
 
-PREDICTION_REUSE = "prediction_reuse"
-TEACACHE = "teacache"
-FP8_W8A8_DYNAMIC_LINEAR = "fp8_w8a8_dynamic_linear"
-
-TECHNIQUES = (
-    # exp 001 "override": the step runs its scheduler update with an earlier
-    # step's prediction instead of calling the model (ADR 0011).
-    TechniqueSpec(PREDICTION_REUSE,
-                  "on chosen denoising steps, reuse an earlier step's noise prediction "
-                  "instead of calling the model; the scheduler still steps"),
-    # exp 002-004: cross-step reuse of the transformer trunk, decided from a
-    # per-call signal (ADR 0012).
-    TechniqueSpec(TEACACHE,
-                  "skip the transformer trunk on steps where its input signal barely "
-                  "changed, rebuilding its output from a cached residual"),
-    # exp 005 (ADR 0016).
-    TechniqueSpec(FP8_W8A8_DYNAMIC_LINEAR,
-                  "linear layers compute in FP8: weights quantized once at load, "
-                  "activations quantized per call with scales computed at runtime"),
-)
-
-IMPLEMENTATIONS = (
-    # docs/architecture.md, "Three techniques, resolved".
-    ImplementationSpec("fractalyze-prediction-reuse", PREDICTION_REUSE, frozenset({
-        STEP_OBSERVE, STEP_PREDICTION_OVERRIDE, REQUEST_LOCAL_STATE}), frozenset({
-        ExecutionRequirement(Behavior.RUNS_EVERY_INVOCATION, STEP_OBSERVE),
-        ExecutionRequirement(Behavior.OVERRIDE_EXACT, STEP_PREDICTION_OVERRIDE)})),
-    # The capabilities exp 002's policy consumes (opt_trunk_probe/policy.py),
-    # and the behavior ADR 0013 declares on its trunk capabilities.
-    ImplementationSpec("fractalyze-teacache", TEACACHE, frozenset({
-        TIMESTEP_STATE, REQUEST_LOCAL_STATE,
-        TRUNK_OBSERVE, TRUNK_OUTPUT_OVERRIDE, SIGNAL_OBSERVE}), frozenset({
-        ExecutionRequirement(Behavior.RUNS_EVERY_INVOCATION, TRUNK_OBSERVE),
-        ExecutionRequirement(Behavior.RUNS_EVERY_INVOCATION, TRUNK_OUTPUT_OVERRIDE),
-        ExecutionRequirement(Behavior.OVERRIDE_EXACT, TRUNK_OUTPUT_OVERRIDE)})),
-    ImplementationSpec("sglang-native-fp8-w8a8", FP8_W8A8_DYNAMIC_LINEAR, frozenset({
-        ENGINE_FEATURE_FP8_W8A8_DYNAMIC_LINEAR})),
-)
-
-_TRUNK = frozenset({TRUNK_OBSERVE, TRUNK_OUTPUT_OVERRIDE, SIGNAL_OBSERVE})
-PROVIDERS = (
-    # Step seams: exp 001 (Qwen-Image-2.1, FLUX.2-klein). Timestep and
-    # per-owner state: exp 002-003. FP8: exp 005, at SGLang 8ca82118e.
-    ProviderSpec("SGLangAdapter", ProviderKind.ENGINE_ADAPTER, "sglang", None, frozenset({
-        STEP_OBSERVE, STEP_PREDICTION_OVERRIDE, STEP_SCHEDULE_MUTATE,
-        TIMESTEP_STATE, REQUEST_LOCAL_STATE,
-        ENGINE_FEATURE_FP8_W8A8_DYNAMIC_LINEAR})),
-    # exp 002 Bindings (opt_trunk_probe/bindings.py), batched in exp 003.
-    ProviderSpec("SGLangQwenImage21Binding", ProviderKind.BINDING, "sglang", "qwen-image-2.1", _TRUNK),
-    ProviderSpec("SGLangFlux2Binding", ProviderKind.BINDING, "sglang", "flux.2-klein", _TRUNK),
-    # exp 004, at vLLM-Omni 68003cf6a (opt_omni_probe/).
-    ProviderSpec("VllmOmniAdapter", ProviderKind.ENGINE_ADAPTER, "vllm-omni", None, frozenset({
-        TIMESTEP_STATE, REQUEST_LOCAL_STATE})),
-    ProviderSpec("VllmOmniQwenImageBinding", ProviderKind.BINDING, "vllm-omni", "qwen-image-2512", _TRUNK),
-)
+TECHNIQUES = engine_free.TECHNIQUES
+IMPLEMENTATIONS = engine_free.IMPLEMENTATIONS + sglang.IMPLEMENTATIONS
+PROVIDERS = sglang.PROVIDERS + vllm_omni.PROVIDERS
 
 
 def techniques() -> TechniqueRegistry:
@@ -83,9 +27,3 @@ def implementations(technique_registry: TechniqueRegistry | None = None) -> Impl
 
 def providers() -> ProviderRegistry:
     return ProviderRegistry(PROVIDERS)
-
-
-def evaluators() -> dict[str, Evaluator]:
-    """Feasibility evaluators per engine. vLLM-Omni has none yet: its runs in
-    exp 004 were eager only, too little to judge any other mode."""
-    return {"sglang": SGLangFeasibility()}

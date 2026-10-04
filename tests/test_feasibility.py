@@ -7,13 +7,12 @@ the settings that make SGLang run another method (exp 005).
 
 from absl.testing import absltest
 
-from optimizer import catalog
+from optimizer import catalog, engines
 from optimizer.core import feasibility
 from optimizer.core.feasibility import CompileScope, ReasonKind, RuntimeContext, Status
 from optimizer.core.resolver import resolve
-from optimizer.core.specs import (
-    TIMESTEP_STATE, TRUNK_OBSERVE, Behavior, ExecutionRequirement, ImplementationSpec, Target,
-)
+from optimizer.core.capabilities import TIMESTEP_STATE, TRUNK_OBSERVE
+from optimizer.core.specs import Behavior, ExecutionRequirement, ImplementationSpec, Target
 
 SGLANG_QWEN = Target("sglang", "qwen-image-2.1")
 SGLANG_FLUX = Target("sglang", "flux.2-klein")
@@ -22,7 +21,7 @@ EAGER = RuntimeContext()
 
 def _check(implementation_id, target, context):
     impl = catalog.implementations().get(implementation_id)
-    return feasibility.check(impl, resolve(impl, target, catalog.providers()), context, catalog.evaluators())
+    return feasibility.check(impl, resolve(impl, target, catalog.providers()), context, engines.evaluators())
 
 
 class TrunkReuseTest(absltest.TestCase):
@@ -90,7 +89,7 @@ class GenericTest(absltest.TestCase):
         impl = ImplementationSpec("plain", "invented-technique", frozenset({TIMESTEP_STATE}))
         resolution = resolve(impl, SGLANG_QWEN, catalog.providers())
         for context in (EAGER, RuntimeContext(graph_replay=True, compile_scope=CompileScope.WHOLE_MODEL)):
-            r = feasibility.check(impl, resolution, context, catalog.evaluators())
+            r = feasibility.check(impl, resolution, context, engines.evaluators())
             self.assertEqual(r.status, Status.FEASIBLE)
 
     def test_step_seam_requirements_hold_in_every_tested_mode(self):
@@ -107,10 +106,10 @@ class GenericTest(absltest.TestCase):
         impl = catalog.implementations().get("fractalyze-teacache")
         unsupported = resolve(impl, Target("sglang", "no-binding"), catalog.providers())
         with self.assertRaisesRegex(ValueError, "RESOLVED"):
-            feasibility.check(impl, unsupported, EAGER, catalog.evaluators())
+            feasibility.check(impl, unsupported, EAGER, engines.evaluators())
         other = resolve(catalog.implementations().get("sglang-native-fp8-w8a8"), SGLANG_QWEN, catalog.providers())
         with self.assertRaisesRegex(ValueError, "RESOLVED"):
-            feasibility.check(impl, other, EAGER, catalog.evaluators())
+            feasibility.check(impl, other, EAGER, engines.evaluators())
 
     def test_execution_requirement_must_be_on_a_required_capability(self):
         with self.assertRaisesRegex(ValueError, "does not require"):

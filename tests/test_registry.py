@@ -4,9 +4,8 @@ from absl.testing import absltest
 
 from optimizer import catalog
 from optimizer.core.registry import ImplementationRegistry, ProviderRegistry, TechniqueRegistry
-from optimizer.core.specs import (
-    SIGNAL_OBSERVE, TIMESTEP_STATE, ImplementationSpec, ProviderKind, ProviderSpec, Target, TechniqueSpec,
-)
+from optimizer.core.capabilities import SIGNAL_OBSERVE, TIMESTEP_STATE
+from optimizer.core.specs import ImplementationSpec, ProviderKind, ProviderSpec, Target, TechniqueSpec
 
 
 class TechniqueRegistryTest(absltest.TestCase):

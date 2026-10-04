@@ -9,10 +9,10 @@ from absl.testing import absltest
 from optimizer import catalog
 from optimizer.core.registry import ProviderRegistry
 from optimizer.core.resolver import Status, resolve
-from optimizer.core.specs import (
+from optimizer.core.capabilities import (
     REQUEST_LOCAL_STATE, SIGNAL_OBSERVE, TIMESTEP_STATE, TRUNK_OBSERVE, TRUNK_OUTPUT_OVERRIDE,
-    ImplementationSpec, ProviderKind, ProviderSpec, Target,
 )
+from optimizer.core.specs import ImplementationSpec, ProviderKind, ProviderSpec, Target
 
 SGLANG_QWEN = Target("sglang", "qwen-image-2.1")
 SGLANG_FLUX = Target("sglang", "flux.2-klein")
