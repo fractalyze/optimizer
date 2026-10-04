@@ -34,4 +34,5 @@ Start with **Architecture**; the rest explains where it came from.
 - [Experiment 001: step control](experiments/001-step-control/README.md) — one engine-level plugin on Qwen-Image-2.1 and FLUX.2-klein; why step control became three capabilities
 - [Experiment 002: trunk control](experiments/002-trunk-control/README.md) — one TeaCache-style implementation on both models through per-model Bindings; what compile and graph replay do to it
 - [Experiment 003: batched ownership](experiments/003-batched-ownership/README.md) — two requests in one SGLang DiT call; per-owner control holds, savings need agreement
+- [Experiment 004: batched ownership on vLLM-Omni](experiments/004-omni-batched-ownership/README.md) — Qwen-Image-2512 requests at different steps in one DiT call; per-owner control holds on a second engine
 - [Sol-Engine](docs/sol-engine.md) — the NVIDIA system this project is modeled on, and which parts of it are not public
