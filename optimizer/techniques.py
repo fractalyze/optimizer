@@ -10,6 +10,7 @@ from optimizer.core.capabilities import (
     REQUEST_LOCAL_STATE, SIGNAL_OBSERVE, STEP_OBSERVE, STEP_PREDICTION_OVERRIDE, TIMESTEP_STATE, TRUNK_OBSERVE,
     TRUNK_OUTPUT_OVERRIDE,
 )
+from optimizer.core.resources import STEP_PREDICTION, TRUNK
 from optimizer.core.specs import Behavior, ExecutionRequirement, ImplementationSpec, TechniqueSpec
 
 PREDICTION_REUSE = "prediction_reuse"
@@ -35,17 +36,20 @@ TECHNIQUES = (
 
 IMPLEMENTATIONS = (
     # docs/architecture.md, "Three techniques, resolved"; requirements per
-    # ADR 0013 on the step seams.
+    # ADR 0013 on the step seams; it decides the step's prediction alone.
     ImplementationSpec("fractalyze-prediction-reuse", PREDICTION_REUSE, frozenset({
         STEP_OBSERVE, STEP_PREDICTION_OVERRIDE, REQUEST_LOCAL_STATE}), frozenset({
         ExecutionRequirement(Behavior.RUNS_EVERY_INVOCATION, STEP_OBSERVE),
-        ExecutionRequirement(Behavior.OVERRIDE_EXACT, STEP_PREDICTION_OVERRIDE)})),
+        ExecutionRequirement(Behavior.OVERRIDE_EXACT, STEP_PREDICTION_OVERRIDE)}),
+        owns=frozenset({STEP_PREDICTION})),
     # The capabilities exp 002's policy consumes (opt_trunk_probe/policy.py),
-    # and the behavior ADR 0013 declares on its trunk capabilities.
+    # and the behavior ADR 0013 declares on its trunk capabilities; it
+    # decides the trunk's output alone.
     ImplementationSpec("fractalyze-teacache", TEACACHE, frozenset({
         TIMESTEP_STATE, REQUEST_LOCAL_STATE,
         TRUNK_OBSERVE, TRUNK_OUTPUT_OVERRIDE, SIGNAL_OBSERVE}), frozenset({
         ExecutionRequirement(Behavior.RUNS_EVERY_INVOCATION, TRUNK_OBSERVE),
         ExecutionRequirement(Behavior.RUNS_EVERY_INVOCATION, TRUNK_OUTPUT_OVERRIDE),
-        ExecutionRequirement(Behavior.OVERRIDE_EXACT, TRUNK_OUTPUT_OVERRIDE)})),
+        ExecutionRequirement(Behavior.OVERRIDE_EXACT, TRUNK_OUTPUT_OVERRIDE)}),
+        owns=frozenset({TRUNK})),
 )
