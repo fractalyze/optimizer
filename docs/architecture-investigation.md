@@ -362,7 +362,10 @@ Every conflict below is real, and each is caught by one field of the
   of the quantization config (`flux_2.py:514`).
 - Both must be in place before compile.
 - Step skip and TeaCache can coexist only if a skipped step never reaches the
-  trunk, so the composer has to order them or reject the pair.
+  trunk, so the composer has to order them or reject the pair. *2026-10-04:
+  prediction reuse replaces the whole DiT call before the trunk is entered, so
+  this holds by construction; the composer declares no ordering for the pair,
+  which has not been run together ([ADR 0020](adr/0020-composer.md)).*
 - TeaCache is rejected whenever graph capture is on.
 
 ---
