@@ -23,9 +23,10 @@ flowchart LR
 
 ## Layout
 
-    optimizer/core/             Core: specs, registries, capability resolution, feasibility
-    optimizer/adapters/         engine-side knowledge Core asks for, e.g. SGLang's feasibility evaluator
-    optimizer/catalog.py        the validated techniques, implementations and providers
+    optimizer/core/             Core: capability vocabulary, specs, registries, resolution, feasibility; imports no engine
+    optimizer/techniques.py     the techniques and our engine-free implementations
+    optimizer/engines/          per engine: its providers, native implementations and runtime policy
+    optimizer/catalog.py        gathers the atomic catalog entries from their owners
     tests/                      interface tests: uv run --group dev python -m pytest
     docs/architecture.md        the current design (start here)
     docs/adr/                   decision records, one decision per file
