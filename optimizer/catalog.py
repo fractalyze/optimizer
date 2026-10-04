@@ -7,11 +7,13 @@ is not enough (vLLM-Omni's step seams and native FP8 are therefore absent).
 
 from __future__ import annotations
 
+from optimizer.adapters.sglang import SGLangFeasibility
+from optimizer.core.feasibility import Evaluator
 from optimizer.core.registry import ImplementationRegistry, ProviderRegistry, TechniqueRegistry
 from optimizer.core.specs import (
     REQUEST_LOCAL_STATE, SIGNAL_OBSERVE, STEP_OBSERVE, STEP_PREDICTION_OVERRIDE, STEP_SCHEDULE_MUTATE,
-    TIMESTEP_STATE, TRUNK_OBSERVE, TRUNK_OUTPUT_OVERRIDE, ImplementationSpec, ProviderKind, ProviderSpec,
-    TechniqueSpec, ENGINE_FEATURE_FP8_W8A8_DYNAMIC_LINEAR,
+    TIMESTEP_STATE, TRUNK_OBSERVE, TRUNK_OUTPUT_OVERRIDE, Behavior, ExecutionRequirement, ImplementationSpec,
+    ProviderKind, ProviderSpec, TechniqueSpec, ENGINE_FEATURE_FP8_W8A8_DYNAMIC_LINEAR,
 )
 
 PREDICTION_REUSE = "prediction_reuse"
@@ -38,11 +40,17 @@ TECHNIQUES = (
 IMPLEMENTATIONS = (
     # docs/architecture.md, "Three techniques, resolved".
     ImplementationSpec("fractalyze-prediction-reuse", PREDICTION_REUSE, frozenset({
-        STEP_OBSERVE, STEP_PREDICTION_OVERRIDE, REQUEST_LOCAL_STATE})),
-    # The capabilities exp 002's policy consumes (opt_trunk_probe/policy.py).
+        STEP_OBSERVE, STEP_PREDICTION_OVERRIDE, REQUEST_LOCAL_STATE}), frozenset({
+        ExecutionRequirement(Behavior.RUNS_EVERY_INVOCATION, STEP_OBSERVE),
+        ExecutionRequirement(Behavior.OVERRIDE_EXACT, STEP_PREDICTION_OVERRIDE)})),
+    # The capabilities exp 002's policy consumes (opt_trunk_probe/policy.py),
+    # and the behavior ADR 0013 declares on its trunk capabilities.
     ImplementationSpec("fractalyze-teacache", TEACACHE, frozenset({
         TIMESTEP_STATE, REQUEST_LOCAL_STATE,
-        TRUNK_OBSERVE, TRUNK_OUTPUT_OVERRIDE, SIGNAL_OBSERVE})),
+        TRUNK_OBSERVE, TRUNK_OUTPUT_OVERRIDE, SIGNAL_OBSERVE}), frozenset({
+        ExecutionRequirement(Behavior.RUNS_EVERY_INVOCATION, TRUNK_OBSERVE),
+        ExecutionRequirement(Behavior.RUNS_EVERY_INVOCATION, TRUNK_OUTPUT_OVERRIDE),
+        ExecutionRequirement(Behavior.OVERRIDE_EXACT, TRUNK_OUTPUT_OVERRIDE)})),
     ImplementationSpec("sglang-native-fp8-w8a8", FP8_W8A8_DYNAMIC_LINEAR, frozenset({
         ENGINE_FEATURE_FP8_W8A8_DYNAMIC_LINEAR})),
 )
@@ -75,3 +83,9 @@ def implementations(technique_registry: TechniqueRegistry | None = None) -> Impl
 
 def providers() -> ProviderRegistry:
     return ProviderRegistry(PROVIDERS)
+
+
+def evaluators() -> dict[str, Evaluator]:
+    """Feasibility evaluators per engine. vLLM-Omni has none yet: its runs in
+    exp 004 were eager only, too little to judge any other mode."""
+    return {"sglang": SGLangFeasibility()}
