@@ -11,7 +11,8 @@ vLLM-Omni's real Qwen-Image and FLUX code paths by five experiments.
 Components are built one at a time, in the order the ADRs set. Built so far:
 the technique and implementation registries, capability resolution
 ([ADR 0017](docs/adr/0017-registries-and-capability-resolution.md)) and
-feasibility ([ADR 0018](docs/adr/0018-feasibility-in-core.md)).
+feasibility ([ADR 0018](docs/adr/0018-feasibility-in-core.md)) and the
+composer ([ADR 0020](docs/adr/0020-composer.md)).
 
 ```mermaid
 flowchart LR
@@ -23,7 +24,7 @@ flowchart LR
 
 ## Layout
 
-    optimizer/core/             Core: capability vocabulary, specs, registries, resolution, feasibility; imports no engine
+    optimizer/core/             Core: vocabularies, specs, registries, resolution, feasibility, composition; imports no engine
     optimizer/techniques.py     the techniques and our engine-free implementations
     optimizer/engines/          per engine: its providers, native implementations and runtime policy
     optimizer/catalog.py        gathers the atomic catalog entries from their owners

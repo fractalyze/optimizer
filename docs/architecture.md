@@ -14,7 +14,8 @@ each part is shaped this way is in the ADRs
 [0016](adr/0016-native-implementations.md),
 [0017](adr/0017-registries-and-capability-resolution.md),
 [0018](adr/0018-feasibility-in-core.md),
-[0019](adr/0019-catalog-and-engine-policy-ownership.md)). The evidence from
+[0019](adr/0019-catalog-and-engine-policy-ownership.md),
+[0020](adr/0020-composer.md)). The evidence from
 SGLang's code is in the [investigation](architecture-investigation.md).
 
 ## In short
@@ -63,7 +64,7 @@ flowchart TB
     RUN["<b>Install and run</b><br/>plugin hooks · launch args · request params"]
     ENG{"<b>Engagement verification</b><br/>runtime evidence"}
     MEAS["<b>Measurement</b><br/>speed · quality gate → measurement history"]
-    BAD["<b>Failed / invalid, recorded as a status</b><br/>UNSUPPORTED · INFEASIBLE ·<br/>RUNTIME_ERROR · FAILED_TO_ENGAGE"]
+    BAD["<b>Failed / invalid, recorded as a status</b><br/>UNSUPPORTED · INFEASIBLE · CONFLICT ·<br/>RUNTIME_ERROR · FAILED_TO_ENGAGE"]
 
     OPT --> TEC --> IMP -- "required capabilities" --> RES
     RES --- TGT
@@ -281,13 +282,15 @@ Every field is here because a real problem in SGLang's code needs it.
 | `constraints` | **B.** lifecycle needs: `mutates_model`, `dynamic_in_forward`, `request_state` ([ADR 0009](adr/0009-lifecycle-constraints.md)) | some changes must precede compilation; some decide inside the forward; some need setup and cleanup per request |
 | `execution` | **C.** execution requirements on the capabilities it uses: `runs_every_invocation`, `override_exact` ([ADR 0013](adr/0013-feasibility-and-engagement.md)) | a capability that exists may still not execute correctly in the applied mode |
 | `owns` | resources it needs exclusively | FP8 and NVFP4 both want the linear layers; TeaCache and cache-dit both want the trunk |
+| `after` | resources whose owners must be in place before it | ordering without naming another implementation, e.g. a quantizer after a layer fusion |
 | `engaged(evidence)` | a verdict and reason, from counters the adapter reports | an optimization that silently did nothing must not report a speedup |
 
-In code so far, `ImplementationSpec` carries `id`, `technique`, `requires` and
-`execution` ([ADR 0017](adr/0017-registries-and-capability-resolution.md),
-[ADR 0018](adr/0018-feasibility-in-core.md)); the other fields arrive with the
-stages that consume them (composer: `constraints`, `owns`; engagement:
-`engaged`).
+In code so far, `ImplementationSpec` carries `id`, `technique`, `requires`,
+`execution`, `owns` and `after`
+([ADR 0017](adr/0017-registries-and-capability-resolution.md),
+[ADR 0018](adr/0018-feasibility-in-core.md), [ADR 0020](adr/0020-composer.md));
+the other fields arrive with the stages that consume them (execution plan:
+`constraints`; engagement: `engaged`).
 
 **The implementation says what behavior it needs, the EngineAdapter says
 whether this mode gives it.** A generic implementation never names an engine
@@ -303,8 +306,8 @@ compute that, so nobody maintains it by hand.
 1. Drop every implementation whose capabilities this target cannot provide
    (`UNSUPPORTED`).
 2. Drop every implementation that is not feasible in the applied execution
-   mode, with its lifecycle needs and the other chosen implementations
-   (`INFEASIBLE`).
+   mode (`INFEASIBLE`), and every set of them that cannot coexist
+   (`CONFLICT`).
 3. Default order among the rest:
    1. a native implementation that has already **passed the quality gate on
       this target**;
@@ -320,7 +323,8 @@ remain, the optimizer can measure both.
 | Status | Means |
 |---|---|
 | `UNSUPPORTED` | a required capability cannot be resolved |
-| `INFEASIBLE` | an execution requirement in the applied mode rules it out (feasibility), or lifecycle or an ownership conflict with the other chosen implementations does (composer) |
+| `INFEASIBLE` | an execution requirement in the applied mode rules it out (feasibility) |
+| `CONFLICT` | it cannot coexist with the other chosen implementations (composer) |
 | `RUNTIME_ERROR` | it crashed |
 | `FAILED_TO_ENGAGE` | it ran, but its evidence does not show the optimization executed |
 | `VALID` | engaged; the only status that becomes a speed and quality data point |
@@ -396,13 +400,30 @@ Resolver      is one implementation supported by a target?
    ↓
 Feasibility   can that resolved implementation run in this RuntimeContext?
    ↓
-[Composer]    combines several feasible implementations; not built yet
+Composer      can several feasible implementations coexist, in what order?
+   ↓
+[Execution plan]  not built yet
 ```
+
+**Composer.** Determines whether multiple individually feasible
+implementations can coexist, and derives any required relative ordering from
+their declared atomic constraints: exclusive resource claims (`owns`) and
+resources whose owners must come first (`after`). Sharing a required
+capability is never a conflict. Its output is a partial order, not an
+execution plan ([ADR 0020](adr/0020-composer.md)).
+
+| State | Means | Stage |
+|---|---|---|
+| `UNSUPPORTED` | a required capability does not resolve | resolution |
+| `INFEASIBLE` | one implementation cannot run in this RuntimeContext | feasibility |
+| `CONFLICT` | individually feasible implementations cannot coexist | composer |
 
 **The catalog contains atomic building blocks only. Combinations are created
 dynamically by the composer.** No entry ever names "SGLang + Qwen + TeaCache
 + FP8"; the catalog grows by one entry per technique, implementation or
-provider. It does not say which implementation wins, whether anything is
+provider, O(techniques + implementations + providers), and the composer
+evaluates any set of them from each entry's own claims, never from a stored
+combination or a pairwise compatibility table. It does not say which implementation wins, whether anything is
 supported or feasible, what conflicts, or in what order things run
 ([ADR 0019](adr/0019-catalog-and-engine-policy-ownership.md)).
 
@@ -481,6 +502,10 @@ list of class paths and four short functions.
   reports it `UNSUPPORTED` or `AMBIGUOUS`; no precedence. Resolution answers
   "supported" only, never "feasible" or "engaged".
   [ADR 0017](adr/0017-registries-and-capability-resolution.md)
+- The composer takes supported, feasible candidates for one target and
+  derives coexistence and a partial order from each implementation's own
+  `owns` and `after`; no combination is stored, no pair is special-cased.
+  [ADR 0020](adr/0020-composer.md)
 - Feasibility takes a resolved implementation and a `RuntimeContext`; the
   target engine's evaluator judges every execution requirement and required
   capability, and all must pass. Only what is knowable before launch is
