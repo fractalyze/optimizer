@@ -12,6 +12,7 @@ import dataclasses
 import enum
 
 from optimizer.core.capabilities import check_capability
+from optimizer.core.resources import check_resource
 
 @dataclasses.dataclass(frozen=True)
 class TechniqueSpec:
@@ -50,12 +51,19 @@ class ImplementationSpec:
     (docs/architecture.md, "Implementation contract"). Native and generic
     implementations differ only in what they require. `execution` says what
     behavior it needs at some of those capabilities; the target's feasibility
-    evaluator decides whether the runtime gives it."""
+    evaluator decides whether the runtime gives it.
+
+    For composition: `owns` names resources it controls exclusively, so no
+    other implementation in the same configuration may claim them; `after`
+    names resources whose owners must be in place before it. Both are about
+    this implementation alone, never about another one by name."""
 
     id: str
     technique: str
     requires: frozenset[str]
     execution: frozenset[ExecutionRequirement] = frozenset()
+    owns: frozenset[str] = frozenset()
+    after: frozenset[str] = frozenset()
 
     def __post_init__(self):
         for capability in self.requires:
@@ -63,6 +71,10 @@ class ImplementationSpec:
         for requirement in self.execution:
             if requirement.capability not in self.requires:
                 raise ValueError(f"{self.id}: {requirement} is on a capability it does not require")
+        for resource in self.owns | self.after:
+            check_resource(resource)
+        if self.owns & self.after:
+            raise ValueError(f"{self.id}: cannot come after the owner of a resource it owns itself")
 
 
 class ProviderKind(enum.Enum):
