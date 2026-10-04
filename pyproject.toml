@@ -1,0 +1,19 @@
+[project]
+name = "optimizer"
+version = "0.0.0"
+description = "Agent-driven inference optimizer for diffusion models (core: technique registry and capability resolution)."
+requires-python = ">=3.10"
+dependencies = []
+
+[dependency-groups]
+dev = ["absl-py", "pytest"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["optimizer*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
