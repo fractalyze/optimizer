@@ -35,4 +35,5 @@ Start with **Architecture**; the rest explains where it came from.
 - [Experiment 002: trunk control](experiments/002-trunk-control/README.md) — one TeaCache-style implementation on both models through per-model Bindings; what compile and graph replay do to it
 - [Experiment 003: batched ownership](experiments/003-batched-ownership/README.md) — two requests in one SGLang DiT call; per-owner control holds, savings need agreement
 - [Experiment 004: batched ownership on vLLM-Omni](experiments/004-omni-batched-ownership/README.md) — Qwen-Image-2512 requests at different steps in one DiT call; per-owner control holds on a second engine
+- [Experiment 005: native FP8](experiments/005-native-fp8/README.md) — SGLang's FP8 through the whole optimizer path on both models; no glue, 1.5× faster, and why configuration is not evidence
 - [Sol-Engine](docs/sol-engine.md) — the NVIDIA system this project is modeled on, and which parts of it are not public

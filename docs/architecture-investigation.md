@@ -452,10 +452,17 @@ architecture runs first. Each one names the claim it can break.
         vLLM-Omni's own TeaCache already uses per-model extractors that play the
         Binding's role. Two contract gaps remain: batched calls (item 2b) and
         ComfyUI having no request, only a sampling run.
-- [ ] **4. A native implementation is configuration plus an engagement check.**
+- [x] **4. A native implementation is configuration plus an engagement check.**
       Launch native FP8 on both models and count the live FP8 `quant_method`s.
       - Falsified if model-specific glue is needed, e.g. Qwen-Image-2.1's
         plain `nn.Linear`.
+      - **Done** ([experiment 005](../experiments/005-native-fp8/README.md)):
+        one flag and one engine-level probe on both models, no Binding; the
+        models' plain `nn.Linear` simply stay 16-bit. FP8 W8A8 engaged on
+        every quantizable layer (1.57× and 1.50×). The same flag silently ran
+        weight-only FP8 or partial coverage under engine settings; feasibility
+        and engagement caught both. Recorded in
+        [ADR 0016](adr/0016-native-implementations.md).
 - [x] Check whether FLUX.2 klein's layer count and forward kwargs differ from
       FLUX.2-dev in the loaded checkpoint config. FLUX.2-klein-base-4B has 5
       double-stream and 20 single-stream blocks, and loads as SGLang's
