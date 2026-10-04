@@ -6,9 +6,11 @@ searches acceleration techniques and returns configurations that are faster
 **and** pass a quality gate. Every speedup carries its baseline, its
 measurement and its gate evidence.
 
-Status: design phase. No code yet. The architecture has been checked against
-SGLang's real Qwen-Image and FLUX code paths. Components are built one at a
-time, in the order the ADRs set.
+Status: building Core. The architecture has been checked against SGLang's and
+vLLM-Omni's real Qwen-Image and FLUX code paths by five experiments.
+Components are built one at a time, in the order the ADRs set. Built so far:
+the technique and implementation registries and capability resolution
+([ADR 0017](docs/adr/0017-registries-and-capability-resolution.md)).
 
 ```mermaid
 flowchart LR
@@ -20,6 +22,9 @@ flowchart LR
 
 ## Layout
 
+    optimizer/core/             Core: specs, registries, capability resolution
+    optimizer/catalog.py        the validated techniques, implementations and providers
+    tests/                      interface tests: uv run --group dev python -m pytest
     docs/architecture.md        the current design (start here)
     docs/adr/                   decision records, one decision per file
     experiments/                throwaway spikes that test the design; each has a README

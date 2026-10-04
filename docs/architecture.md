@@ -1,6 +1,6 @@
 # Architecture
 
-Status: current · last substantive update 2026-10-02
+Status: current · last substantive update 2026-10-04
 
 This is the current design, and the place where its terms are defined. Why
 each part is shaped this way is in the ADRs
@@ -10,7 +10,9 @@ each part is shaped this way is in the ADRs
 [0012](adr/0012-trunk-capabilities.md),
 [0013](adr/0013-feasibility-and-engagement.md),
 [0014](adr/0014-batched-execution-owners.md),
-[0015](adr/0015-owners-at-different-steps.md)). The evidence from
+[0015](adr/0015-owners-at-different-steps.md),
+[0016](adr/0016-native-implementations.md),
+[0017](adr/0017-registries-and-capability-resolution.md)). The evidence from
 SGLang's code is in the [investigation](architecture-investigation.md).
 
 ## In short
@@ -422,6 +424,10 @@ list of class paths and four short functions.
   owner; row identity is read wherever the engine keeps it; batch composition
   is recorded with every measurement.
   [ADR 0015](adr/0015-owners-at-different-steps.md)
+- Core's registries are frozen metadata, and capability resolution assigns
+  each required capability to exactly one of the target's providers, or
+  reports it `UNSUPPORTED` or `AMBIGUOUS`; no precedence.
+  [ADR 0017](adr/0017-registries-and-capability-resolution.md)
 - A Technique names a numerical method, not an engine flag. A native
   implementation is one `engine_feature.*` capability plus an engagement check
   of the method and its coverage, with no Binding; the EngineAdapter's
