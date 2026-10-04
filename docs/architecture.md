@@ -12,7 +12,8 @@ each part is shaped this way is in the ADRs
 [0014](adr/0014-batched-execution-owners.md),
 [0015](adr/0015-owners-at-different-steps.md),
 [0016](adr/0016-native-implementations.md),
-[0017](adr/0017-registries-and-capability-resolution.md)). The evidence from
+[0017](adr/0017-registries-and-capability-resolution.md),
+[0018](adr/0018-feasibility-in-core.md)). The evidence from
 SGLang's code is in the [investigation](architecture-investigation.md).
 
 ## In short
@@ -200,10 +201,23 @@ continues with). The EngineAdapter decides whether the applied execution mode
 gives them.
 
 **Configured / supported / feasible / engaged.** Four states, none implied by
-another. *Configured*: the optimizer selected it. *Supported*: every required
-capability resolves on the target. *Feasible*: lifecycle and execution
-requirements hold in the applied mode, with no ownership conflict. *Engaged*:
-the run's own evidence shows the optimization executed.
+another. *Configured*: the optimizer selected it. Then:
+
+```text
+Supported   all required capabilities resolve against the target
+    ↓
+Feasible    the resolved implementation's known execution requirements can
+    ↓       be satisfied by the provided RuntimeContext
+[execution]
+    ↓
+Engaged     runtime evidence proves the implementation actually executed
+```
+
+Core computes the first two before anything is launched
+([ADR 0017](adr/0017-registries-and-capability-resolution.md),
+[ADR 0018](adr/0018-feasibility-in-core.md)); lifecycle and ownership
+conflicts join feasibility in the composer. Engagement is only ever read from
+a run.
 
 **Measurement history.** Everything learned by measuring: good thresholds,
 fitted coefficients, layers that are sensitive to precision, the quality cost
@@ -429,6 +443,10 @@ list of class paths and four short functions.
   reports it `UNSUPPORTED` or `AMBIGUOUS`; no precedence. Resolution answers
   "supported" only, never "feasible" or "engaged".
   [ADR 0017](adr/0017-registries-and-capability-resolution.md)
+- Feasibility takes a resolved implementation and a `RuntimeContext`; the
+  target engine's evaluator judges every execution requirement and required
+  capability, and all must pass. Only what is knowable before launch is
+  rejected. [ADR 0018](adr/0018-feasibility-in-core.md)
 - A Technique names a numerical method, not an engine flag. A native
   implementation needs engine-native capabilities (`engine_feature.*`), no
   Binding, and an engagement check of the method and its coverage; the EngineAdapter's
