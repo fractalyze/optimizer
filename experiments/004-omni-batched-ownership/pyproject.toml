@@ -1,0 +1,16 @@
+[project]
+name = "opt-omni-probe"
+version = "0.0.0"
+description = "SPIKE: experiment 004 probe. Runs experiment 002's trunk policy per batch row when one vLLM-Omni DiT call serves several requests. Not production code."
+requires-python = ">=3.10"
+dependencies = ["opt-trunk-probe"]
+
+[project.entry-points."vllm_omni.general_plugins"]
+opt_omni_probe = "opt_omni_probe.plugin:register"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["opt_omni_probe"]

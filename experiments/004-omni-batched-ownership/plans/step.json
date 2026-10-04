@@ -1,0 +1,180 @@
+{
+ "defaults": {
+  "height": 256,
+  "width": 256,
+  "num_inference_steps": 8
+ },
+ "items": {
+  "a": {
+   "prompt": "A neon shop sign that reads \"QWEN IMAGE\", rainy night, reflections on wet pavement",
+   "seed": 101
+  },
+  "b": {
+   "prompt": "A red fox asleep in fresh snow under pine trees, soft morning light",
+   "seed": 202
+  }
+ },
+ "rounds": [
+  {
+   "name": "stagger-observe-0",
+   "items": [
+    {
+     "item": "a",
+     "mode": "observe"
+    },
+    {
+     "item": "b",
+     "mode": "observe",
+     "after": {
+      "item": "a",
+      "step": 2
+     }
+    }
+   ]
+  },
+  {
+   "name": "stagger-observe-1",
+   "items": [
+    {
+     "item": "a",
+     "mode": "observe"
+    },
+    {
+     "item": "b",
+     "mode": "observe",
+     "after": {
+      "item": "a",
+      "step": 2
+     }
+    }
+   ]
+  },
+  {
+   "name": "stagger-a-identity",
+   "items": [
+    {
+     "item": "a",
+     "mode": "identity_residual"
+    },
+    {
+     "item": "b",
+     "mode": "observe",
+     "after": {
+      "item": "a",
+      "step": 2
+     }
+    }
+   ]
+  },
+  {
+   "name": "stagger-a-reuse",
+   "items": [
+    {
+     "item": "a",
+     "mode": "reuse",
+     "k": 4
+    },
+    {
+     "item": "b",
+     "mode": "observe",
+     "after": {
+      "item": "a",
+      "step": 2
+     }
+    }
+   ]
+  },
+  {
+   "name": "stagger-b-reuse",
+   "items": [
+    {
+     "item": "a",
+     "mode": "observe"
+    },
+    {
+     "item": "b",
+     "mode": "reuse",
+     "k": 1,
+     "after": {
+      "item": "a",
+      "step": 2
+     }
+    }
+   ]
+  },
+  {
+   "name": "stagger-both-reuse-d2",
+   "items": [
+    {
+     "item": "a",
+     "mode": "reuse",
+     "k": 3
+    },
+    {
+     "item": "b",
+     "mode": "reuse",
+     "k": 1,
+     "after": {
+      "item": "a",
+      "step": 2
+     }
+    }
+   ]
+  },
+  {
+   "name": "stagger-both-reuse-d3",
+   "items": [
+    {
+     "item": "a",
+     "mode": "reuse",
+     "k": 4
+    },
+    {
+     "item": "b",
+     "mode": "reuse",
+     "k": 1,
+     "after": {
+      "item": "a",
+      "step": 2
+     }
+    }
+   ]
+  },
+  {
+   "name": "stagger-both-reuse-d4",
+   "items": [
+    {
+     "item": "a",
+     "mode": "reuse",
+     "k": 5
+    },
+    {
+     "item": "b",
+     "mode": "reuse",
+     "k": 1,
+     "after": {
+      "item": "a",
+      "step": 2
+     }
+    }
+   ]
+  },
+  {
+   "name": "stagger-observe-after",
+   "items": [
+    {
+     "item": "a",
+     "mode": "observe"
+    },
+    {
+     "item": "b",
+     "mode": "observe",
+     "after": {
+      "item": "a",
+      "step": 2
+     }
+    }
+   ]
+  }
+ ]
+}
