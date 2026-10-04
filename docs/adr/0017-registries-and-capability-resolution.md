@@ -1,6 +1,6 @@
 # ADR 0017: Registries are plain metadata; capability resolution matches each requirement to exactly one provider
 
-Status: accepted · 2026-10-04 · first Core component, built under [ADR 0004](0004-incremental-build-interface-tests.md)
+Status: accepted · 2026-10-04 · first Core component, built under [ADR 0004](0004-incremental-build-interface-tests.md); amends the capability naming in [ADR 0016](0016-native-implementations.md)
 
 ## In short
 
@@ -12,7 +12,8 @@ hand and imported without any engine. The resolver assigns each required
 capability to exactly one of the target's providers. If none provides it, the
 result is `UNSUPPORTED`; if more than one does, it is `AMBIGUOUS`. It never
 picks a provider by precedence. Nothing about feasibility, composition or
-running is decided here.
+running is decided here: a `RESOLVED` implementation is *supported*, which
+says nothing about whether it is *feasible* or will be *engaged*.
 
 ## Context
 
@@ -21,7 +22,7 @@ implementation:
 
 | Path | Example | Provided by | Evidence |
 |---|---|---|---|
-| engine-common | prediction reuse at the step seam | EngineAdapter only | exp 001 |
+| engine-common | prediction reuse at the step seam (`fractalyze-prediction-reuse`) | EngineAdapter only | exp 001 |
 | model-bound | trunk reuse | EngineAdapter (timestep, owner state) + Binding (trunk, signal) | exp 002–004, two engines |
 | engine-native | FP8 W8A8 | EngineAdapter (`engine_feature.*`) | exp 005 |
 
@@ -62,9 +63,17 @@ A capability id is a string from the vocabulary of the architecture: the
 eight with runtime evidence (`step_observe`, `step_prediction_override`,
 `step_schedule_mutate`, `timestep_state`, `request_local_state`,
 `trunk_observe`, `trunk_output_override`, `signal_observe`), or
-`engine_feature.<technique>`. An unknown id is rejected when a spec is built,
-so a misspelling fails at registration rather than as a puzzling
+an id under `engine_feature.`. An unknown id is rejected when a spec is
+built, so a misspelling fails at registration rather than as a puzzling
 `UNSUPPORTED`. Adding an id means adding the experiment that validates it.
+
+`engine_feature.fp8_w8a8_dynamic_linear` is the one engine-native capability
+with evidence. Its name matches its technique's, but that is not a naming
+rule: a future native implementation may need several engine-native
+capabilities, or one whose name differs from any technique. This amends
+[ADR 0016](0016-native-implementations.md), which described the requirement
+as "a single `engine_feature.<technique>` capability"; its decision stands
+otherwise.
 
 ### A provider lists only what was exercised on it
 
@@ -79,6 +88,25 @@ Binding locates the trunk, so resolution names the Binding as their provider.
 That keeps each capability with exactly one provider, and matches the
 architecture's rule that what is specific to one engine × model pair belongs
 to the Binding.
+
+### Resolution answers "supported", and only that
+
+Resolution answers one question: can this target provide the semantic
+capabilities this implementation requires? It does not answer, and must not
+be read as answering:
+
+- whether the hardware can run it (FP8 needs sm ≥ 89);
+- whether this engine revision behaves as traced;
+- whether the applied compile or CUDA graph mode lets the operations execute
+  correctly;
+- whether the engine will silently fall back to a different method (FP8's
+  weight-only Marlin path);
+- whether the optimization actually executed at runtime.
+
+The first four are feasibility and the last is engagement, both later
+stages ([ADR 0013](0013-feasibility-and-engagement.md),
+[ADR 0016](0016-native-implementations.md)). Supported, feasible and engaged
+stay three separate states.
 
 ### Resolution is one-to-one, or it fails visibly
 
@@ -117,10 +145,6 @@ vLLM-Omni @ `68003cf6a`). The resolver itself is tested on a CPU, against the
 catalog and against artificial registries for the failure cases.
 
 **Open:**
-- **`fractalyze-step-skip` realizes `prediction_reuse`.** The implementation
-  id is the architecture's; the technique id follows ADR 0011, where skipping
-  a whole step was rejected. One of them may be renamed when the step
-  implementation is built.
 - **Model identity.** `Target.model` is a short id per checkpoint family
   (`qwen-image-2.1`, `flux.2-klein`, `qwen-image-2512`). Whether one Binding
   covers several checkpoints, as FLUX.2's shared transformer class suggests,

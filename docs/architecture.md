@@ -139,7 +139,7 @@ Engagement verification  did trunk blocks actually not run on the reused calls?
 6. **Measure.** Only a `VALID` run is measured; the threshold that worked is
    measurement history, per model.
 
-Step skip, by contrast, needs only `step_observe`,
+Prediction reuse, by contrast, needs only `step_observe`,
 `step_prediction_override` and per-request state. It resolves entirely in
 SGLangAdapter, never touches a Binding, and its execution requirements held in
 every mode tested. That difference is the point of resolution.
@@ -154,8 +154,8 @@ cache-dit's block cache is not "TeaCache".
 
 **Implementation.** One concrete way to realize a technique. It is either:
 - **native:** it switches on a feature the engine already has, e.g.
-  `sglang-native-fp8-w8a8`. It needs one `engine_feature.*` capability and
-  no Binding; what makes it hard is that one engine flag can run more than
+  `sglang-native-fp8-w8a8`. It needs engine-native capabilities
+  (`engine_feature.*`; FP8 needs one) and no Binding; what makes it hard is that one engine flag can run more than
   one method ([ADR 0016](adr/0016-native-implementations.md));
 - **generic:** our own code, written against capabilities, e.g.
   `fractalyze-teacache`.
@@ -307,9 +307,9 @@ and the optimizer must never learn from it as if it were.
 
 ## Three techniques, resolved
 
-| | Step skip | TeaCache | FP8 linear |
+| | Prediction reuse | TeaCache | FP8 linear |
 |---|---|---|---|
-| **Implementation** | `fractalyze-step-skip` (generic) | `fractalyze-teacache` (generic) | `sglang-native-fp8-w8a8` (native) |
+| **Implementation** | `fractalyze-prediction-reuse` (generic) | `fractalyze-teacache` (generic) | `sglang-native-fp8-w8a8` (native) |
 | **Needs** | step observe, step prediction override, request state | timestep, request state, trunk observe, trunk output override, signal observe | `engine_feature.fp8_w8a8_dynamic_linear` |
 | **Provided by** | SGLangAdapter only | SGLangAdapter + per-model Binding | SGLangAdapter only |
 | **Model-specific code** | none | where the trunk and signal are | none |
@@ -426,11 +426,12 @@ list of class paths and four short functions.
   [ADR 0015](adr/0015-owners-at-different-steps.md)
 - Core's registries are frozen metadata, and capability resolution assigns
   each required capability to exactly one of the target's providers, or
-  reports it `UNSUPPORTED` or `AMBIGUOUS`; no precedence.
+  reports it `UNSUPPORTED` or `AMBIGUOUS`; no precedence. Resolution answers
+  "supported" only, never "feasible" or "engaged".
   [ADR 0017](adr/0017-registries-and-capability-resolution.md)
 - A Technique names a numerical method, not an engine flag. A native
-  implementation is one `engine_feature.*` capability plus an engagement check
-  of the method and its coverage, with no Binding; the EngineAdapter's
+  implementation needs engine-native capabilities (`engine_feature.*`), no
+  Binding, and an engagement check of the method and its coverage; the EngineAdapter's
   feasibility owns the engine's silent fallbacks; a technique applied at load
   is part of the model's identity.
   [ADR 0016](adr/0016-native-implementations.md),

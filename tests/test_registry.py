@@ -6,7 +6,6 @@ from optimizer import catalog
 from optimizer.core.registry import ImplementationRegistry, ProviderRegistry, TechniqueRegistry
 from optimizer.core.specs import (
     SIGNAL_OBSERVE, TIMESTEP_STATE, ImplementationSpec, ProviderKind, ProviderSpec, Target, TechniqueSpec,
-    engine_feature,
 )
 
 
@@ -54,7 +53,7 @@ class ImplementationRegistryTest(absltest.TestCase):
 class CapabilityIdTest(absltest.TestCase):
 
     def test_known_and_engine_feature_capabilities_accepted(self):
-        ImplementationSpec("i", "t", frozenset({SIGNAL_OBSERVE, engine_feature("anything")}))
+        ImplementationSpec("i", "t", frozenset({SIGNAL_OBSERVE, "engine_feature.not_named_after_a_technique"}))
 
     def test_misspelled_capability_rejected(self):
         with self.assertRaisesRegex(ValueError, "signal_observ"):
