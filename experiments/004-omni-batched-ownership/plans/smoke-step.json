@@ -1,0 +1,33 @@
+{
+ "defaults": {
+  "height": 256,
+  "width": 256,
+  "num_inference_steps": 8
+ },
+ "items": {
+  "a": {
+   "prompt": "A neon shop sign that reads \"QWEN IMAGE\", rainy night, reflections on wet pavement",
+   "seed": 101
+  },
+  "b": {
+   "prompt": "A red fox asleep in fresh snow under pine trees, soft morning light",
+   "seed": 202
+  }
+ },
+ "rounds": [
+  {
+   "name": "smoke-stagger",
+   "items": [
+    {
+     "item": "a",
+     "mode": "observe"
+    },
+    {
+     "item": "b",
+     "mode": "observe",
+     "delay_s": 4
+    }
+   ]
+  }
+ ]
+}
