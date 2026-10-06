@@ -5,7 +5,7 @@ from absl.testing import absltest
 from optimizer import catalog
 from optimizer.core.registry import ImplementationRegistry, ProviderRegistry, TechniqueRegistry
 from optimizer.core.capabilities import SIGNAL_OBSERVE, TIMESTEP_STATE
-from optimizer.core.specs import ImplementationSpec, ProviderKind, ProviderSpec, Target, TechniqueSpec
+from optimizer.core.specs import ImplementationSpec, ModelRef, ProviderKind, ProviderSpec, Target, TechniqueSpec
 
 
 class TechniqueRegistryTest(absltest.TestCase):
@@ -65,17 +65,17 @@ class ProviderRegistryTest(absltest.TestCase):
 
     def test_adapter_then_model_binding(self):
         registry = catalog.providers()
-        self.assertEqual([p.id for p in registry.for_target(Target("sglang", "qwen-image-2.1"))],
+        self.assertEqual([p.id for p in registry.for_target(Target("sglang", "QwenImage21Transformer2DModel", ModelRef("Qwen/Qwen-Image-2.1")))],
                          ["SGLangAdapter", "SGLangQwenImage21Binding"])
-        self.assertEqual([p.id for p in registry.for_target(Target("sglang", "flux.2-klein"))],
+        self.assertEqual([p.id for p in registry.for_target(Target("sglang", "Flux2Transformer2DModel", ModelRef("black-forest-labs/FLUX.2-klein-base-4B")))],
                          ["SGLangAdapter", "SGLangFlux2Binding"])
 
     def test_model_without_binding_still_gets_its_adapter(self):
-        self.assertEqual([p.id for p in catalog.providers().for_target(Target("sglang", "unknown"))],
+        self.assertEqual([p.id for p in catalog.providers().for_target(Target("sglang", "unknown", ModelRef("ckpt")))],
                          ["SGLangAdapter"])
 
     def test_unknown_engine_has_no_providers(self):
-        self.assertEqual(catalog.providers().for_target(Target("comfyui", "qwen-image-2.1")), ())
+        self.assertEqual(catalog.providers().for_target(Target("comfyui", "QwenImage21Transformer2DModel", ModelRef("Qwen/Qwen-Image-2.1"))), ())
 
     def test_binding_must_name_a_model_and_adapter_must_not(self):
         with self.assertRaises(ValueError):

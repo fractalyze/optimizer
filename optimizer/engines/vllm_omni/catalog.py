@@ -12,11 +12,12 @@ from optimizer.core.capabilities import (
 from optimizer.core.specs import ProviderKind, ProviderSpec
 
 ENGINE = "vllm-omni"
-QWEN_IMAGE_2512 = "qwen-image-2512"
+# The DiT class exp 004 hooked for Qwen-Image-2512 (opt_omni_probe/bindings.py).
+QWEN_IMAGE_DIT = "QwenImageTransformer2DModel"
 
 PROVIDERS = (
     ProviderSpec("VllmOmniAdapter", ProviderKind.ENGINE_ADAPTER, ENGINE, None, frozenset({
         TIMESTEP_STATE, REQUEST_LOCAL_STATE})),
-    ProviderSpec("VllmOmniQwenImageBinding", ProviderKind.BINDING, ENGINE, QWEN_IMAGE_2512, frozenset({
+    ProviderSpec("VllmOmniQwenImageBinding", ProviderKind.BINDING, ENGINE, QWEN_IMAGE_DIT, frozenset({
         TRUNK_OBSERVE, TRUNK_OUTPUT_OVERRIDE, SIGNAL_OBSERVE})),
 )

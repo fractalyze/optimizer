@@ -49,6 +49,9 @@ is needed later it will be referenced from an entry, not imported by it.
 | `TechniqueSpec` | `id`, `summary` (the numerical method, per ADR 0016) | conceptual parameters: when a stage consumes them |
 | `ImplementationSpec` | `id`, `technique`, `requires` | lifecycle, execution requirements, `owns`, `engaged`: feasibility, composition, engagement |
 | `ProviderSpec` | `id`, `kind` (adapter or Binding), `engine`, `model` (Bindings only), `provides` | seams, hooks, execution mode: the adapter's private code |
+
+*2026-10-06: model identity is amended by [ADR 0021](0021-execution-plan.md): `Target` is (engine, architecture, ModelRef) and Bindings are keyed by architecture.*
+
 | `Target` | `engine`, `model` | GPU, compile and graph mode, engine settings: feasibility |
 
 `ImplementationSpec` has no engine or model field. Where it can run is
@@ -149,6 +152,7 @@ catalog and against artificial registries for the failure cases.
   (`qwen-image-2.1`, `flux.2-klein`, `qwen-image-2512`). Whether one Binding
   covers several checkpoints, as FLUX.2's shared transformer class suggests,
   is untested.
+  *2026-10-06: resolved by [ADR 0021](0021-execution-plan.md): Bindings are keyed by the engine's model class read from the checkpoint.*
 
 ## Alternatives rejected
 

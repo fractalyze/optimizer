@@ -15,7 +15,8 @@ each part is shaped this way is in the ADRs
 [0017](adr/0017-registries-and-capability-resolution.md),
 [0018](adr/0018-feasibility-in-core.md),
 [0019](adr/0019-catalog-and-engine-policy-ownership.md),
-[0020](adr/0020-composer.md)). The evidence from
+[0020](adr/0020-composer.md),
+[0021](adr/0021-execution-plan.md)). The evidence from
 SGLang's code is in the [investigation](architecture-investigation.md).
 
 ## In short
@@ -54,7 +55,7 @@ flowchart TB
     TEC["<b>Technique</b><br/>what: concept + conceptual param schema"]
     IMP["<b>Implementation</b><br/>capability · lifecycle · execution requirements<br/>owns · after · engaged()"]
     RES["<b>Capability resolution</b><br/>which layer provides each capability, through which seam"]
-    subgraph TGT["Target = one engine × one model"]
+    subgraph TGT["Target = one engine × one model (checkpoint, its architecture)"]
         EA["<b>EngineAdapter</b><br/>how this engine works, incl. its execution mode<br/>e.g. SGLangAdapter"]
         BD["<b>Binding</b><br/>where this model lives in this engine<br/>e.g. SGLangQwenBinding"]
         MS["<b>ModelSpec</b><br/>what this model is<br/>e.g. QwenImageSpec"]
@@ -186,7 +187,10 @@ denoising loop, and its built-in features. Example: `SGLangAdapter`.
 whether it uses true CFG, how it scales timesteps, how its text and image
 streams are arranged. It holds no measured numbers. Example: `QwenImageSpec`.
 
-**Binding.** Glue that only makes sense for one engine × model pair. It says
+**Binding.** Glue that only makes sense for one engine × model pair. It is
+keyed by the engine's model class, the transformer `_class_name` a checkpoint
+declares, so every checkpoint of that class shares it
+([ADR 0021](adr/0021-execution-plan.md)). It says
 where a logical part, like "the trunk", lives in that engine's version of the
 model, and translates the engine's native state into a capability's standard
 form. It sits between EngineAdapter and ModelSpec and replaces neither.
@@ -224,7 +228,7 @@ at a time ([ADR 0017](adr/0017-registries-and-capability-resolution.md),
 [ADR 0018](adr/0018-feasibility-in-core.md)). Feasibility involves no other
 implementation: ownership conflicts and ordering between implementations are
 the composer's question ([ADR 0020](adr/0020-composer.md)), and lifecycle
-constraints the execution plan's. Engagement is only ever read
+constraints the execution plan's ([ADR 0021](adr/0021-execution-plan.md)). Engagement is only ever read
 from a run.
 
 **Measurement history.** Everything learned by measuring: good thresholds,
@@ -289,11 +293,13 @@ Every field is here because a real problem in SGLang's code needs it.
 | `engaged(evidence)` | a verdict and reason, from counters the adapter reports | an optimization that silently did nothing must not report a speedup |
 
 In code so far, `ImplementationSpec` carries `id`, `technique`, `requires`,
-`execution`, `owns` and `after`
+`execution`, `owns`, `after` and `lifecycle` (ADR 0009's `mutates_model` and
+`request_state`; the contract's `constraints`)
 ([ADR 0017](adr/0017-registries-and-capability-resolution.md),
-[ADR 0018](adr/0018-feasibility-in-core.md), [ADR 0020](adr/0020-composer.md));
-the other fields arrive with the stages that consume them (execution plan:
-`constraints`; engagement: `engaged`).
+[ADR 0018](adr/0018-feasibility-in-core.md), [ADR 0020](adr/0020-composer.md),
+[ADR 0021](adr/0021-execution-plan.md)); `engaged` arrives with engagement.
+`params` is declared on the technique (`TechniqueSpec.parameters`), and a
+trial's values come as a `TechniqueConfig`.
 
 **The implementation says what behavior it needs, the EngineAdapter says
 whether this mode gives it.** A generic implementation never names an engine
@@ -405,8 +411,20 @@ Feasibility   can that resolved implementation run in this RuntimeContext?
    ↓
 Composer      can several feasible implementations coexist, in what order?
    ↓
-[Execution plan]  not built yet
+Execution plan
+   ├── server   ServerKey: what is fixed when the server is built
+   └── request  what varies per request, with the technique's values
+   ↓
+[Execution → Engagement → Measurement]  not built yet
 ```
+
+**Catalog contains atomic building blocks. An ExecutionPlan represents one
+dynamically composed configuration.** **The ServerKey is the live-server reuse
+boundary:** two plans with equal keys can run on the same started server
+without rebuilding it. It holds the engine, the model, the server-affecting
+facts of the RuntimeContext and the implementations that change the served
+model, never request parameters or evidence such as an identity check
+([ADR 0021](adr/0021-execution-plan.md)).
 
 **Composer.** Determines whether multiple individually feasible
 implementations can coexist, and derives any required relative ordering from
@@ -432,9 +450,9 @@ supported or feasible, what conflicts, or in what order things run
 
 | Code | Owns |
 |---|---|
-| `optimizer/core/` | the capability and resource vocabularies, metadata types, registries, resolution, the feasibility check and the composer; imports no engine and no catalog |
+| `optimizer/core/` | the capability and resource vocabularies, metadata types, registries, resolution, the feasibility check, the composer and the execution planner; imports no engine and no catalog |
 | `optimizer/techniques.py` | techniques and our engine-free implementations |
-| `optimizer/engines/<engine>/` | that engine's providers and native implementations, and its evaluator with its runtime policy as explicit data |
+| `optimizer/engines/<engine>/` | that engine's providers and native implementations, its feasibility evaluator and its plan translator, each with its policy as explicit data |
 | `optimizer/catalog.py` | gathering the atomic entries from their owners |
 
 ## What a Binding may contain
@@ -505,6 +523,10 @@ list of class paths and four short functions.
   reports it `UNSUPPORTED` or `AMBIGUOUS`; no precedence. Resolution answers
   "supported" only, never "feasible" or "engaged".
   [ADR 0017](adr/0017-registries-and-capability-resolution.md)
+- An execution plan places each implementation by its lifecycle into server
+  and request contributions; the ServerKey holds only server-affecting facts
+  and is the reuse boundary; engines lower plans with their own data.
+  [ADR 0021](adr/0021-execution-plan.md)
 - The composer takes supported, feasible candidates for one target and
   derives coexistence and a partial order from each implementation's own
   `owns` and `after`; no combination is stored, no pair is special-cased.

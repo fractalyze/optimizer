@@ -80,7 +80,7 @@ class SGLangFeasibility:
 
     def capability(self, capability: str, context: RuntimeContext) -> Reason | None:
         for fallback in self.native_fallbacks:
-            if fallback.capability == capability and fallback.trigger.is_set(context.engine_env.get(fallback.env_var, "")):
+            if fallback.capability == capability and fallback.trigger.is_set(context.env(fallback.env_var)):
                 return Reason(ReasonKind.KNOWN_NATIVE_FALLBACK, capability,
                               f"{fallback.env_var} is set: {fallback.consequence}")
         return None

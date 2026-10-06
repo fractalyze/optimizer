@@ -56,11 +56,11 @@ class ImplementationRegistry(_Registry[ImplementationSpec]):
 
 class ProviderRegistry(_Registry[ProviderSpec]):
     def for_target(self, target: Target) -> tuple[ProviderSpec, ...]:
-        """The target's engine adapter(s), then the Binding(s) for its model.
+        """The target's engine adapter(s), then the Binding(s) for its architecture.
 
-        A model with no Binding still gets its engine's adapter, so
+        An architecture with no Binding still gets its engine's adapter, so
         engine-common capabilities resolve on any model."""
         same_engine = [p for p in self.list() if p.engine == target.engine]
         adapters = [p for p in same_engine if p.kind is ProviderKind.ENGINE_ADAPTER]
-        bindings = [p for p in same_engine if p.kind is ProviderKind.BINDING and p.model == target.model]
+        bindings = [p for p in same_engine if p.kind is ProviderKind.BINDING and p.architecture == target.architecture]
         return tuple(adapters + bindings)

@@ -42,7 +42,15 @@ class RuntimeContext:
     compile_scope: CompileScope = CompileScope.NONE
     graph_replay: bool = False
     identity_check_passed: bool | None = None
-    engine_env: Mapping[str, str] = dataclasses.field(default_factory=dict)
+    engine_env: tuple[tuple[str, str], ...] = ()  # a mapping is accepted and frozen
+
+    def __post_init__(self):
+        # Hashable, so runs judged in the same context can be grouped.
+        pairs = self.engine_env.items() if isinstance(self.engine_env, Mapping) else self.engine_env
+        object.__setattr__(self, "engine_env", tuple(sorted(pairs)))
+
+    def env(self, var: str) -> str:
+        return dict(self.engine_env).get(var, "")
 
 
 class ReasonKind(enum.Enum):
@@ -68,8 +76,12 @@ class Status(enum.Enum):
 
 @dataclasses.dataclass(frozen=True)
 class FeasibilityResult:
+    """`context` is the runtime it was judged in, so a later stage cannot
+    apply the verdict to a different one."""
+
     implementation: str
     status: Status
+    context: RuntimeContext
     reasons: tuple[Reason, ...] = ()
 
     def __str__(self) -> str:
@@ -99,8 +111,8 @@ def check(implementation: ImplementationSpec, resolution: Resolution, context: R
     if evaluator is None:
         reason = Reason(ReasonKind.UNSUPPORTED_RUNTIME_CONDITION, engine,
                         "no evaluator for this engine's runtime, so nothing can be guaranteed")
-        return FeasibilityResult(implementation.id, Status.INFEASIBLE, (reason,))
+        return FeasibilityResult(implementation.id, Status.INFEASIBLE, context, (reason,))
     answers = [evaluator.requirement(r, context) for r in sorted(implementation.execution, key=str)]
     answers += [evaluator.capability(c, context) for c in sorted(resolution.providers)]
     reasons = tuple(r for r in answers if r is not None)
-    return FeasibilityResult(implementation.id, Status.INFEASIBLE if reasons else Status.FEASIBLE, reasons)
+    return FeasibilityResult(implementation.id, Status.INFEASIBLE if reasons else Status.FEASIBLE, context, reasons)

@@ -11,7 +11,9 @@ from optimizer.core.capabilities import (
     TRUNK_OUTPUT_OVERRIDE,
 )
 from optimizer.core.resources import STEP_PREDICTION, TRUNK
-from optimizer.core.specs import Behavior, ExecutionRequirement, ImplementationSpec, TechniqueSpec
+from optimizer.core.specs import (
+    Behavior, ExecutionRequirement, ImplementationSpec, Lifecycle, ParameterSpec, ParamType, TechniqueSpec,
+)
 
 PREDICTION_REUSE = "prediction_reuse"
 TEACACHE = "teacache"
@@ -22,12 +24,16 @@ TECHNIQUES = (
     # step's prediction instead of calling the model (ADR 0011).
     TechniqueSpec(PREDICTION_REUSE,
                   "on chosen denoising steps, reuse an earlier step's noise prediction "
-                  "instead of calling the model; the scheduler still steps"),
+                  "instead of calling the model; the scheduler still steps",
+                  # exp 001 overrode chosen step indices.
+                  (ParameterSpec("steps", ParamType.INT_TUPLE),)),
     # exp 002-004: cross-step reuse of the transformer trunk, decided from a
     # per-call signal (ADR 0012).
     TechniqueSpec(TEACACHE,
                   "skip the transformer trunk on steps where its input signal barely "
-                  "changed, rebuilding its output from a cached residual"),
+                  "changed, rebuilding its output from a cached residual",
+                  # the threshold on the signal's change (architecture.md, walk-through).
+                  (ParameterSpec("threshold", ParamType.FLOAT),)),
     # exp 005 (ADR 0016).
     TechniqueSpec(FP8_W8A8_DYNAMIC_LINEAR,
                   "linear layers compute in FP8: weights quantized once at load, "
@@ -41,7 +47,9 @@ IMPLEMENTATIONS = (
         STEP_OBSERVE, STEP_PREDICTION_OVERRIDE, REQUEST_LOCAL_STATE}), frozenset({
         ExecutionRequirement(Behavior.RUNS_EVERY_INVOCATION, STEP_OBSERVE),
         ExecutionRequirement(Behavior.OVERRIDE_EXACT, STEP_PREDICTION_OVERRIDE)}),
-        owns=frozenset({STEP_PREDICTION})),
+        owns=frozenset({STEP_PREDICTION}),
+        # Decides per request at the step seam; changes no module (ADR 0009).
+        lifecycle=frozenset({Lifecycle.REQUEST_STATE})),
     # The capabilities exp 002's policy consumes (opt_trunk_probe/policy.py),
     # and the behavior ADR 0013 declares on its trunk capabilities; it
     # decides the trunk's output alone.
@@ -51,5 +59,8 @@ IMPLEMENTATIONS = (
         ExecutionRequirement(Behavior.RUNS_EVERY_INVOCATION, TRUNK_OBSERVE),
         ExecutionRequirement(Behavior.RUNS_EVERY_INVOCATION, TRUNK_OUTPUT_OVERRIDE),
         ExecutionRequirement(Behavior.OVERRIDE_EXACT, TRUNK_OUTPUT_OVERRIDE)}),
-        owns=frozenset({TRUNK})),
+        owns=frozenset({TRUNK}),
+        # Trunk hooks go in before the model is built (exp 002); its policy
+        # and state are per request and CFG branch (ADR 0009).
+        lifecycle=frozenset({Lifecycle.MUTATES_MODEL, Lifecycle.REQUEST_STATE})),
 )
