@@ -34,7 +34,7 @@ history of the design is visible.
 | [0006](0006-lifecycle-phases.md) | Lifecycle phases follow SGLang's compile and capture points | superseded by 0009 |
 | [0007](0007-v1-seams-and-first-techniques.md) | V1 seams and the first three techniques | superseded by 0010 |
 | [0008](0008-capability-layer.md) | Implementations depend on capabilities; EngineAdapter, ModelSpec and Binding are separate | accepted |
-| [0009](0009-lifecycle-constraints.md) | Implementations declare lifecycle constraints; engine stages stay in the adapter | accepted; engine mapping of `dynamic_in_forward` amended by 0013; consumed by the execution plan, not the composer, per 0020 |
+| [0009](0009-lifecycle-constraints.md) | Implementations declare lifecycle constraints; engine stages stay in the adapter | accepted; engine mapping of `dynamic_in_forward` amended by 0013; consumed by the execution plan, not the composer, per 0020; `mutates_model` and `request_state` encoded by 0021 |
 | [0010](0010-v1-capabilities-and-first-techniques.md) | V1 capabilities, optional block access, first three techniques | accepted; step control amended by 0011, trunk control by 0012 |
 | [0011](0011-split-step-control.md) | Split step control into observe, prediction override and schedule mutation | accepted |
 | [0012](0012-trunk-capabilities.md) | Trunk control is three capabilities, defined at the trunk's edges | accepted |
@@ -42,7 +42,8 @@ history of the design is visible.
 | [0014](0014-batched-execution-owners.md) | In a batched model call, the EngineAdapter maps rows to owners; savings need agreement | accepted; extended to a second engine by 0015 |
 | [0015](0015-owners-at-different-steps.md) | Owners in one model call may be at different steps; step state and batch composition are per owner and per measurement | accepted |
 | [0016](0016-native-implementations.md) | A native implementation is configuration plus an engagement check; the adapter owns the engine's silent fallbacks | accepted; capability naming amended by 0017 |
-| [0017](0017-registries-and-capability-resolution.md) | Registries are plain metadata; capability resolution matches each requirement to exactly one provider | accepted; where entries live amended by 0019 |
-| [0018](0018-feasibility-in-core.md) | Feasibility asks the target engine's evaluator about each execution requirement and capability of a resolved implementation | accepted; evaluator location amended by 0019 |
+| [0017](0017-registries-and-capability-resolution.md) | Registries are plain metadata; capability resolution matches each requirement to exactly one provider | accepted; where entries live amended by 0019; techniques gain parameters per 0021 |
+| [0018](0018-feasibility-in-core.md) | Feasibility asks the target engine's evaluator about each execution requirement and capability of a resolved implementation | accepted; evaluator location amended by 0019; results record their context per 0021 |
 | [0019](0019-catalog-and-engine-policy-ownership.md) | The catalog is atomic and assembled from its owners; engine policy is explicit data in the engine's package | accepted |
 | [0020](0020-composer.md) | The composer derives coexistence and ordering from each implementation's own exclusive claims | accepted |
+| [0021](0021-execution-plan.md) | An execution plan places each implementation by its lifecycle; the ServerKey is the live-server reuse boundary | accepted |
