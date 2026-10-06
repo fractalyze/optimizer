@@ -15,8 +15,10 @@ from optimizer.core.specs import ImplementationSpec, Lifecycle, ProviderKind, Pr
 from optimizer.techniques import FP8_W8A8_DYNAMIC_LINEAR
 
 ENGINE = "sglang"
-QWEN_IMAGE_2_1 = "qwen-image-2.1"
-FLUX_2_KLEIN = "flux.2-klein"
+# The DiT classes exp 002's Bindings hook, as checkpoints name them in
+# transformer/config.json and SGLang resolves them (models/dits/*.py EntryClass).
+QWEN_IMAGE_21_DIT = "QwenImage21Transformer2DModel"
+FLUX_2_DIT = "Flux2Transformer2DModel"
 
 PROVIDERS = (
     # Step seams: exp 001 (Qwen-Image-2.1, FLUX.2-klein). Timestep and
@@ -26,9 +28,9 @@ PROVIDERS = (
         TIMESTEP_STATE, REQUEST_LOCAL_STATE,
         ENGINE_FEATURE_FP8_W8A8_DYNAMIC_LINEAR})),
     # exp 002 Bindings (opt_trunk_probe/bindings.py), batched in exp 003.
-    ProviderSpec("SGLangQwenImage21Binding", ProviderKind.BINDING, ENGINE, QWEN_IMAGE_2_1, frozenset({
+    ProviderSpec("SGLangQwenImage21Binding", ProviderKind.BINDING, ENGINE, QWEN_IMAGE_21_DIT, frozenset({
         TRUNK_OBSERVE, TRUNK_OUTPUT_OVERRIDE, SIGNAL_OBSERVE})),
-    ProviderSpec("SGLangFlux2Binding", ProviderKind.BINDING, ENGINE, FLUX_2_KLEIN, frozenset({
+    ProviderSpec("SGLangFlux2Binding", ProviderKind.BINDING, ENGINE, FLUX_2_DIT, frozenset({
         TRUNK_OBSERVE, TRUNK_OUTPUT_OVERRIDE, SIGNAL_OBSERVE})),
 )
 

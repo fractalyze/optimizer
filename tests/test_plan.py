@@ -15,11 +15,11 @@ from optimizer.core.composition import Candidate, compose
 from optimizer.core.feasibility import CompileScope, RuntimeContext
 from optimizer.core.plan import ExecutionPlan, ServerSettings, plan
 from optimizer.core.resolver import resolve
-from optimizer.core.specs import ImplementationSpec, ParameterSpec, ParamType, Target, TechniqueConfig, TechniqueSpec
+from optimizer.core.specs import ImplementationSpec, ModelRef, ParamType, ParameterSpec, Target, TechniqueConfig, TechniqueSpec
 from optimizer.core.registry import TechniqueRegistry
 from optimizer.engines.sglang import plan as sglang_plan
 
-SGLANG_QWEN = Target("sglang", "qwen-image-2.1")
+SGLANG_QWEN = Target("sglang", "QwenImage21Transformer2DModel", ModelRef("Qwen/Qwen-Image-2.1"))
 FP8, TEACACHE, REUSE = "sglang-native-fp8-w8a8", "fractalyze-teacache", "fractalyze-prediction-reuse"
 
 

@@ -149,29 +149,44 @@ class ProviderKind(enum.Enum):
 class ProviderSpec:
     """A target component and the capabilities it makes available.
 
-    An adapter has no `model`. A Binding names the model it binds; its
-    capabilities run through its engine's adapter, but it is what makes them
-    available on that model, so resolution names the Binding."""
+    An adapter has no `architecture`. A Binding names the engine's model
+    class it is written against, the transformer `_class_name` a checkpoint
+    declares, as SGLang keys its own per-model cache-dit glue
+    (runtime/cache/cache_dit_integration.py:405). Its capabilities run
+    through its engine's adapter, but it is what makes them available on that
+    architecture, so resolution names the Binding."""
 
     id: str
     kind: ProviderKind
     engine: str
-    model: str | None
+    architecture: str | None
     provides: frozenset[str]
 
     def __post_init__(self):
-        if (self.kind is ProviderKind.BINDING) != (self.model is not None):
-            raise ValueError(f"{self.id}: a Binding names a model and an adapter does not")
+        if (self.kind is ProviderKind.BINDING) != (self.architecture is not None):
+            raise ValueError(f"{self.id}: a Binding names an architecture and an adapter does not")
         for capability in self.provides:
             check_capability(capability)
+
+
+@dataclasses.dataclass(frozen=True)
+class ModelRef:
+    """The weights to serve, as the user names them: a hub id or a local
+    path, and optionally a pinned revision. Never a catalog entry."""
+
+    checkpoint: str
+    revision: str | None = None
 
 
 @dataclasses.dataclass(frozen=True)
 class Target:
     """The engine and model a resolution is asked about.
 
-    Only what selects the providers. GPU, compile and graph mode, and engine
-    settings decide feasibility, which is a later stage (ADR 0013)."""
+    `architecture` is the engine's model class for `model`, read from the
+    checkpoint by the engine's package; it alone selects Bindings, so every
+    checkpoint of one class shares them. GPU, compile and graph mode, and
+    engine settings decide feasibility, a later stage (ADR 0013)."""
 
     engine: str
-    model: str
+    architecture: str
+    model: ModelRef

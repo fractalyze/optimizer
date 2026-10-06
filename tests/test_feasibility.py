@@ -12,10 +12,10 @@ from optimizer.core import feasibility
 from optimizer.core.feasibility import CompileScope, ReasonKind, RuntimeContext, Status
 from optimizer.core.resolver import resolve
 from optimizer.core.capabilities import TIMESTEP_STATE, TRUNK_OBSERVE
-from optimizer.core.specs import Behavior, ExecutionRequirement, ImplementationSpec, Target
+from optimizer.core.specs import Behavior, ExecutionRequirement, ImplementationSpec, ModelRef, Target
 
-SGLANG_QWEN = Target("sglang", "qwen-image-2.1")
-SGLANG_FLUX = Target("sglang", "flux.2-klein")
+SGLANG_QWEN = Target("sglang", "QwenImage21Transformer2DModel", ModelRef("Qwen/Qwen-Image-2.1"))
+SGLANG_FLUX = Target("sglang", "Flux2Transformer2DModel", ModelRef("black-forest-labs/FLUX.2-klein-base-4B"))
 EAGER = RuntimeContext()
 
 
@@ -98,13 +98,13 @@ class GenericTest(absltest.TestCase):
         self.assertEqual(_check("fractalyze-prediction-reuse", SGLANG_QWEN, context).status, Status.FEASIBLE)
 
     def test_engine_without_an_evaluator_cannot_be_judged(self):
-        r = _check("fractalyze-teacache", Target("vllm-omni", "qwen-image-2512"), EAGER)
+        r = _check("fractalyze-teacache", Target("vllm-omni", "QwenImageTransformer2DModel", ModelRef("Qwen/Qwen-Image-2512")), EAGER)
         self.assertEqual(r.status, Status.INFEASIBLE)
         self.assertEqual(r.reasons[0].kind, ReasonKind.UNSUPPORTED_RUNTIME_CONDITION)
 
     def test_only_a_resolved_resolution_of_the_same_implementation_is_accepted(self):
         impl = catalog.implementations().get("fractalyze-teacache")
-        unsupported = resolve(impl, Target("sglang", "no-binding"), catalog.providers())
+        unsupported = resolve(impl, Target("sglang", "no-binding", ModelRef("ckpt")), catalog.providers())
         with self.assertRaisesRegex(ValueError, "RESOLVED"):
             feasibility.check(impl, unsupported, EAGER, engines.evaluators())
         other = resolve(catalog.implementations().get("sglang-native-fp8-w8a8"), SGLANG_QWEN, catalog.providers())

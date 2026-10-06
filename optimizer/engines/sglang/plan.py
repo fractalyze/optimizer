@@ -16,7 +16,7 @@ from typing import Mapping
 
 from optimizer.core.feasibility import CompileScope
 from optimizer.core.plan import ExecutionPlan
-from optimizer.engines.sglang.catalog import ENGINE, FLUX_2_KLEIN, QWEN_IMAGE_2_1
+from optimizer.engines.sglang.catalog import ENGINE
 
 STEP_PLUGIN = "opt_step_probe"  # exp 001: the adapter's step seams
 TRUNK_PLUGIN = "opt_trunk_probe"  # exp 002: trunk hooks through the model's Binding
@@ -31,7 +31,8 @@ class ServerLowering:
 @dataclasses.dataclass(frozen=True)
 class SGLangServerConfig:
     """What `DiffGenerator.from_pretrained` and the worker environment need.
-    `SGLANG_PLUGINS` is derived from `plugins` by whoever launches."""
+    `model_path` is the user's checkpoint, unchanged; `SGLANG_PLUGINS` is
+    derived from `plugins` by whoever launches."""
 
     model_path: str
     server_kwargs: tuple[tuple[str, object], ...]
@@ -50,7 +51,6 @@ class SGLangRequestConfig:
 
 @dataclasses.dataclass(frozen=True)
 class SGLangPlanTranslator:
-    model_paths: Mapping[str, str]
     baseline_plugins: tuple[str, ...]  # present in every server; inert until a request asks
     server: Mapping[str, ServerLowering]  # by implementation id
     request_plugin: Mapping[str, str]  # by implementation id: the plugin reading its policy
@@ -59,9 +59,9 @@ class SGLangPlanTranslator:
         key = plan.server
         if key.engine != ENGINE:
             raise ValueError(f"cannot lower a plan for {key.engine!r} to SGLang")
-        if key.model not in self.model_paths:
-            raise ValueError(f"no checkpoint known for model {key.model!r}")
         kwargs = list(_execution_mode_kwargs(key.settings.compile_scope, key.settings.graph_replay))
+        if key.model.revision is not None:
+            kwargs.append(("revision", key.model.revision))
         plugins = set(self.baseline_plugins)
         for contribution in key.contributions:
             lowering = self._lookup(self.server, contribution.implementation)
@@ -73,7 +73,7 @@ class SGLangPlanTranslator:
             (self._lookup(self.request_plugin, r.implementation),
              (("implementation", r.implementation),) + r.values)
             for r in plan.requests)
-        server = SGLangServerConfig(self.model_paths[key.model], tuple(sorted(kwargs)), key.settings.engine_env,
+        server = SGLangServerConfig(key.model.checkpoint, tuple(sorted(kwargs)), key.settings.engine_env,
                                     tuple(sorted(plugins)))
         return server, SGLangRequestConfig(policies)
 
@@ -100,11 +100,6 @@ def _execution_mode_kwargs(scope: CompileScope, graph_replay: bool) -> tuple[tup
 
 def validated() -> SGLangPlanTranslator:
     return SGLangPlanTranslator(
-        # exp 005's runner.
-        model_paths=MappingProxyType({
-            QWEN_IMAGE_2_1: "Qwen/Qwen-Image-2.1",
-            FLUX_2_KLEIN: "black-forest-labs/FLUX.2-klein-base-4B",
-        }),
         # exp 001: with no policy for a request the step plugin only observes,
         # so it is loaded always and request-only step techniques need no
         # server change.

@@ -15,9 +15,9 @@ from optimizer.core.composition import Candidate, ReasonKind, Status, compose
 from optimizer.core.feasibility import RuntimeContext
 from optimizer.core.resolver import resolve
 from optimizer.core.resources import LINEAR_LAYERS, STEP_PREDICTION, TRUNK
-from optimizer.core.specs import ImplementationSpec, Target
+from optimizer.core.specs import ImplementationSpec, ModelRef, Target
 
-SGLANG_QWEN = Target("sglang", "qwen-image-2.1")
+SGLANG_QWEN = Target("sglang", "QwenImage21Transformer2DModel", ModelRef("Qwen/Qwen-Image-2.1"))
 EAGER = RuntimeContext()
 
 
@@ -105,7 +105,7 @@ class InputContractTest(absltest.TestCase):
             compose(_catalog("fractalyze-teacache", "fractalyze-teacache"))
 
     def test_candidates_must_share_one_target(self):
-        flux = _candidate(catalog.implementations().get("fractalyze-teacache"), Target("sglang", "flux.2-klein"))
+        flux = _candidate(catalog.implementations().get("fractalyze-teacache"), Target("sglang", "Flux2Transformer2DModel", ModelRef("black-forest-labs/FLUX.2-klein-base-4B")))
         with self.assertRaisesRegex(ValueError, "different targets"):
             compose(_catalog("sglang-native-fp8-w8a8") + [flux])
 

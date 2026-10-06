@@ -17,7 +17,7 @@ from typing import Sequence
 from optimizer.core.composition import Candidate, CompositionResult, Order, Status as CompositionStatus
 from optimizer.core.feasibility import CompileScope, RuntimeContext
 from optimizer.core.registry import TechniqueRegistry
-from optimizer.core.specs import Lifecycle, Target, TechniqueConfig
+from optimizer.core.specs import Lifecycle, ModelRef, Target, TechniqueConfig
 
 
 @dataclasses.dataclass(frozen=True)
@@ -58,10 +58,13 @@ class ServerSettings:
 @dataclasses.dataclass(frozen=True)
 class ServerKey:
     """The live-server reuse boundary: plans with equal keys can run on the
-    same started server without rebuilding it. Immutable and hashable."""
+    same started server without rebuilding it. Immutable and hashable.
+
+    It names the checkpoint, not the architecture: two checkpoints of one
+    class are different servers."""
 
     engine: str
-    model: str
+    model: ModelRef
     settings: ServerSettings
     contributions: tuple[ServerContribution, ...]  # sorted by implementation
 
@@ -76,7 +79,7 @@ class ExecutionPlan:
 
     def __str__(self) -> str:
         key = self.server
-        lines = [f"server: {key.engine} + {key.model} {key.settings}"]
+        lines = [f"server: {key.engine} + {key.model.checkpoint} {key.settings}"]
         lines += [f"  {c.implementation}{dict(c.values) or ''}" for c in key.contributions]
         lines += ["request:"] + [f"  {r.implementation} {dict(r.values)}" for r in self.requests]
         lines += [f"order: {o}" for o in self.ordering]

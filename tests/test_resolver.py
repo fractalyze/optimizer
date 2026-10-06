@@ -12,10 +12,10 @@ from optimizer.core.resolver import Status, resolve
 from optimizer.core.capabilities import (
     REQUEST_LOCAL_STATE, SIGNAL_OBSERVE, TIMESTEP_STATE, TRUNK_OBSERVE, TRUNK_OUTPUT_OVERRIDE,
 )
-from optimizer.core.specs import ImplementationSpec, ProviderKind, ProviderSpec, Target
+from optimizer.core.specs import ImplementationSpec, ModelRef, ProviderKind, ProviderSpec, Target
 
-SGLANG_QWEN = Target("sglang", "qwen-image-2.1")
-SGLANG_FLUX = Target("sglang", "flux.2-klein")
+SGLANG_QWEN = Target("sglang", "QwenImage21Transformer2DModel", ModelRef("Qwen/Qwen-Image-2.1"))
+SGLANG_FLUX = Target("sglang", "Flux2Transformer2DModel", ModelRef("black-forest-labs/FLUX.2-klein-base-4B"))
 
 
 def _resolve(implementation_id, target, providers=None):
@@ -31,7 +31,7 @@ class ValidatedPathsTest(absltest.TestCase):
         self.assertEqual(set(r.providers.values()), {"SGLangAdapter"})
 
     def test_engine_common_prediction_reuse_needs_no_binding(self):
-        r = _resolve("fractalyze-prediction-reuse", Target("sglang", "a-model-with-no-binding"))
+        r = _resolve("fractalyze-prediction-reuse", Target("sglang", "a-model-with-no-binding", ModelRef("ckpt")))
         self.assertEqual(r.status, Status.RESOLVED)
 
     def test_trunk_reuse_splits_across_adapter_and_qwen_binding(self):
@@ -52,7 +52,7 @@ class ValidatedPathsTest(absltest.TestCase):
         self.assertEqual(r.providers[TIMESTEP_STATE], "SGLangAdapter")
 
     def test_same_trunk_implementation_resolves_on_a_second_engine(self):
-        r = _resolve("fractalyze-teacache", Target("vllm-omni", "qwen-image-2512"))
+        r = _resolve("fractalyze-teacache", Target("vllm-omni", "QwenImageTransformer2DModel", ModelRef("Qwen/Qwen-Image-2512")))
         self.assertEqual(r.status, Status.RESOLVED)
         self.assertEqual(r.providers[REQUEST_LOCAL_STATE], "VllmOmniAdapter")
         self.assertEqual(r.providers[TRUNK_OUTPUT_OVERRIDE], "VllmOmniQwenImageBinding")
@@ -64,7 +64,7 @@ class ValidatedPathsTest(absltest.TestCase):
             self.assertEqual(dict(r.providers), {"engine_feature.fp8_w8a8_dynamic_linear": "SGLangAdapter"})
 
     def test_native_fp8_is_unsupported_where_the_engine_lacks_the_feature(self):
-        r = _resolve("sglang-native-fp8-w8a8", Target("vllm-omni", "qwen-image-2512"))
+        r = _resolve("sglang-native-fp8-w8a8", Target("vllm-omni", "QwenImageTransformer2DModel", ModelRef("Qwen/Qwen-Image-2512")))
         self.assertEqual(r.status, Status.UNSUPPORTED)
         self.assertEqual(r.missing, ("engine_feature.fp8_w8a8_dynamic_linear",))
 
@@ -72,7 +72,7 @@ class ValidatedPathsTest(absltest.TestCase):
 class FailureTest(absltest.TestCase):
 
     def test_model_without_binding_leaves_trunk_capabilities_missing(self):
-        r = _resolve("fractalyze-teacache", Target("sglang", "a-model-with-no-binding"))
+        r = _resolve("fractalyze-teacache", Target("sglang", "a-model-with-no-binding", ModelRef("ckpt")))
         self.assertEqual(r.status, Status.UNSUPPORTED)
         self.assertEqual(r.missing, (SIGNAL_OBSERVE, TRUNK_OBSERVE, TRUNK_OUTPUT_OVERRIDE))
 
@@ -82,7 +82,7 @@ class FailureTest(absltest.TestCase):
             ProviderSpec("NoSignalBinding", ProviderKind.BINDING, "sglang", "m",
                          frozenset({TRUNK_OBSERVE, TRUNK_OUTPUT_OVERRIDE})),
         ])
-        r = _resolve("fractalyze-teacache", Target("sglang", "m"), no_signal)
+        r = _resolve("fractalyze-teacache", Target("sglang", "m", ModelRef("ckpt")), no_signal)
         self.assertEqual(r.status, Status.UNSUPPORTED)
         self.assertEqual(r.missing, (SIGNAL_OBSERVE,))
         self.assertNotIn(SIGNAL_OBSERVE, r.providers)
@@ -93,7 +93,7 @@ class FailureTest(absltest.TestCase):
             ProviderSpec("B", ProviderKind.BINDING, "e", "m", frozenset({SIGNAL_OBSERVE})),
         ])
         impl = ImplementationSpec("i", "t", frozenset({SIGNAL_OBSERVE}))
-        r = resolve(impl, Target("e", "m"), both)
+        r = resolve(impl, Target("e", "m", ModelRef("ckpt")), both)
         self.assertEqual(r.status, Status.AMBIGUOUS)
         self.assertEqual(dict(r.ambiguous), {SIGNAL_OBSERVE: ("A", "B")})
         self.assertNotIn(SIGNAL_OBSERVE, r.providers)
@@ -107,7 +107,7 @@ class GenericityTest(absltest.TestCase):
 
     def test_printable(self):
         text = str(_resolve("fractalyze-teacache", SGLANG_QWEN))
-        self.assertIn("fractalyze-teacache on sglang + qwen-image-2.1: RESOLVED", text)
+        self.assertIn("fractalyze-teacache on sglang + QwenImage21Transformer2DModel (Qwen/Qwen-Image-2.1): RESOLVED", text)
         self.assertIn("signal_observe -> SGLangQwenImage21Binding", text)
 
 

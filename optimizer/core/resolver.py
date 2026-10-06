@@ -31,7 +31,8 @@ class Resolution:
     ambiguous: Mapping[str, tuple[str, ...]] = dataclasses.field(default_factory=dict)
 
     def __str__(self) -> str:
-        lines = [f"{self.implementation} on {self.target.engine} + {self.target.model}: {self.status.value}"]
+        t = self.target
+        lines = [f"{self.implementation} on {t.engine} + {t.architecture} ({t.model.checkpoint}): {self.status.value}"]
         lines += [f"  {cap} -> {provider}" for cap, provider in self.providers.items()]
         lines += [f"  {cap} -> (none)" for cap in self.missing]
         lines += [f"  {cap} -> {' | '.join(ps)} (ambiguous)" for cap, ps in self.ambiguous.items()]
