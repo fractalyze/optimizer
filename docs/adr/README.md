@@ -42,7 +42,7 @@ history of the design is visible.
 | [0014](0014-batched-execution-owners.md) | In a batched model call, the EngineAdapter maps rows to owners; savings need agreement | accepted; extended to a second engine by 0015 |
 | [0015](0015-owners-at-different-steps.md) | Owners in one model call may be at different steps; step state and batch composition are per owner and per measurement | accepted |
 | [0016](0016-native-implementations.md) | A native implementation is configuration plus an engagement check; the adapter owns the engine's silent fallbacks | accepted; capability naming amended by 0017 |
-| [0017](0017-registries-and-capability-resolution.md) | Registries are plain metadata; capability resolution matches each requirement to exactly one provider | accepted; where entries live amended by 0019; techniques gain parameters per 0021 |
+| [0017](0017-registries-and-capability-resolution.md) | Registries are plain metadata; capability resolution matches each requirement to exactly one provider | accepted; where entries live amended by 0019; model identity and technique parameters amended by 0021 |
 | [0018](0018-feasibility-in-core.md) | Feasibility asks the target engine's evaluator about each execution requirement and capability of a resolved implementation | accepted; evaluator location amended by 0019; results record their context per 0021 |
 | [0019](0019-catalog-and-engine-policy-ownership.md) | The catalog is atomic and assembled from its owners; engine policy is explicit data in the engine's package | accepted |
 | [0020](0020-composer.md) | The composer derives coexistence and ordering from each implementation's own exclusive claims | accepted |

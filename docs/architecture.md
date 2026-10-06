@@ -55,7 +55,7 @@ flowchart TB
     TEC["<b>Technique</b><br/>what: concept + conceptual param schema"]
     IMP["<b>Implementation</b><br/>capability · lifecycle · execution requirements<br/>owns · after · engaged()"]
     RES["<b>Capability resolution</b><br/>which layer provides each capability, through which seam"]
-    subgraph TGT["Target = one engine × one model"]
+    subgraph TGT["Target = one engine × one model (checkpoint, its architecture)"]
         EA["<b>EngineAdapter</b><br/>how this engine works, incl. its execution mode<br/>e.g. SGLangAdapter"]
         BD["<b>Binding</b><br/>where this model lives in this engine<br/>e.g. SGLangQwenBinding"]
         MS["<b>ModelSpec</b><br/>what this model is<br/>e.g. QwenImageSpec"]
@@ -187,7 +187,10 @@ denoising loop, and its built-in features. Example: `SGLangAdapter`.
 whether it uses true CFG, how it scales timesteps, how its text and image
 streams are arranged. It holds no measured numbers. Example: `QwenImageSpec`.
 
-**Binding.** Glue that only makes sense for one engine × model pair. It says
+**Binding.** Glue that only makes sense for one engine × model pair. It is
+keyed by the engine's model class, the transformer `_class_name` a checkpoint
+declares, so every checkpoint of that class shares it
+([ADR 0021](adr/0021-execution-plan.md)). It says
 where a logical part, like "the trunk", lives in that engine's version of the
 model, and translates the engine's native state into a capability's standard
 form. It sits between EngineAdapter and ModelSpec and replaces neither.

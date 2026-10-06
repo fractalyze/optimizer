@@ -1,6 +1,6 @@
 # ADR 0021: An execution plan places each implementation by its lifecycle; the ServerKey is the live-server reuse boundary
 
-Status: accepted · 2026-10-06 · applies [ADR 0009](0009-lifecycle-constraints.md) and [ADR 0016](0016-native-implementations.md) to planning; amends [ADR 0017](0017-registries-and-capability-resolution.md) (techniques gain parameters) and [ADR 0018](0018-feasibility-in-core.md) (results record their context)
+Status: accepted · 2026-10-06 · applies [ADR 0009](0009-lifecycle-constraints.md) and [ADR 0016](0016-native-implementations.md) to planning; amends [ADR 0017](0017-registries-and-capability-resolution.md) (model identity, technique parameters) and [ADR 0018](0018-feasibility-in-core.md) (results record their context)
 
 ## In short
 
@@ -17,7 +17,7 @@ per-request policies; Core knows none of those. Nothing is launched.
 Composer (COMPOSABLE)
         ↓
 Execution plan
-    ├── server   ServerKey: engine, model, server settings, server contributions
+    ├── server   ServerKey: engine, checkpoint, server settings, server contributions
     └── request  per-request contributions with their parameter values
         ↓
 engine translator (SGLang: server kwargs, env, plugins; request policies)
@@ -39,6 +39,33 @@ yet: the parameter values a trial chooses, such as TeaCache's threshold.
 | prediction reuse | step seams in the shared denoising loop, controlled per request (exp 001) | request |
 
 ## Decision
+
+### A model is a checkpoint the user names, and an architecture read from it
+
+Planning needs the weights to serve, and a catalog cannot list every
+checkpoint. ADR 0017 had made `Target.model` a short id per checkpoint
+family (`qwen-image-2.1`), which forced one hand-written alias per
+checkpoint, a duplicate Binding per checkpoint of one class, and a table of
+checkpoint paths in the translator. SGLang separates the two things those ids
+mixed: its loader reads the transformer `_class_name` from the checkpoint's
+diffusers config and resolves the class from a registry each model file
+declares (`transformer_loader.py:295`, `models/dits/*.py` `EntryClass`), and
+its own per-model cache-dit glue is keyed by that class name
+(`cache_dit_integration.py:405`). This follows it:
+
+| | Is | Decides |
+|---|---|---|
+| `ModelRef(checkpoint, revision)` | the user's input: a hub id or a path | the weights, so the ServerKey and, later, measurement history |
+| `Target.architecture` | the engine's model class, read from the checkpoint (`engines/sglang/model.py`) | which Binding applies |
+
+Bindings are keyed by architecture (`ProviderSpec.architecture`), so every
+checkpoint of one class shares them, and a class with no Binding is
+`UNSUPPORTED` rather than mismatched by an alias. The only names the catalog
+still holds are the classes the Bindings were written against: experiment
+002's `QwenImage21Transformer2DModel` and `Flux2Transformer2DModel`,
+experiment 004's `QwenImageTransformer2DModel`. Until production Bindings
+exist as code, the engine's catalog declares them; a Binding should then
+declare its own class, as SGLang's model files declare `EntryClass`.
 
 ### Techniques declare parameters; a trial supplies a TechniqueConfig
 
@@ -63,8 +90,9 @@ requirements since ADR 0013. The planner, which names no technique:
 
 ### The ServerKey holds only what decides how a server is built
 
-`ServerKey` = engine, model, `ServerSettings`, and the sorted server
-contributions. `ServerSettings` projects the `RuntimeContext` onto the facts
+`ServerKey` = engine, `ModelRef`, `ServerSettings`, and the sorted server
+contributions. It names the checkpoint, not the architecture: two checkpoints
+of one class are different servers. `ServerSettings` projects the `RuntimeContext` onto the facts
 that build a server: compile scope, graph replay and engine environment.
 `identity_check_passed` is evidence about a target, not configuration, and is
 left out; a test fails if a new context field is not classified either way.
@@ -81,11 +109,13 @@ hashable for this; it accepts a mapping for `engine_env` and freezes it.
 ### Engine translation is engine data
 
 `engines/sglang/plan.py` lowers a plan using explicit data built by
-`validated()`: checkpoint paths, the plugin each implementation needs at
+`validated()`: the plugin each implementation needs at
 server time, the plugin that reads each request policy, and the server
 arguments for each execution mode (`enable_torch_compile`,
 `regional_compile`, `enable_breakable_cuda_graph`), all as the experiments
-used them. Equal ServerKeys lower to equal server configurations.
+used them. The checkpoint and revision pass through unchanged as
+`model_path` and `revision`. Equal ServerKeys lower to equal server
+configurations.
 
 The step plugin is loaded in every SGLang server, because with no policy for
 a request it only observes (exp 001). That is what lets request-only step
@@ -112,7 +142,11 @@ presence, execution mode and environment; projection of evidence out of the
 key; parameter validation; lowering.
 
 **Left out on purpose:**
-- engine and model revisions in the ServerKey: `Target` has none yet;
+- the engine's revision in the ServerKey: one engine version has been traced;
+- that one Binding fits every checkpoint of its class is code reading: only
+  FLUX.2-klein-base-4B, Qwen-Image-2.1 and Qwen-Image-2512 were run;
+- checkpoints that are not in diffusers format, which SGLang does not load
+  either;
 - machine-specific server arguments the experiments used for memory
   (component residency, warmup resolutions): they belong to the machine's
   execution setup, not the plan;
@@ -124,6 +158,8 @@ key; parameter validation; lowering.
 - **One placement per implementation.** TeaCache needs both.
 - **The whole RuntimeContext in the ServerKey.** Identical servers would get
   different keys whenever an identity check was or was not measured.
+- **A short model id per checkpoint family.** One alias per checkpoint, kept
+  in step with the files by hand, and a Binding duplicated per checkpoint.
 - **Engine settings as technique parameters.** `quantization="fp8"` is how one
   engine realizes a choice, not the choice.
 - **Loading the step plugin only when a request needs it.** The server
