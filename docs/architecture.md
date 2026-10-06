@@ -1,6 +1,6 @@
 # Architecture
 
-Status: current · last substantive update 2026-10-04
+Status: current · last substantive update 2026-10-06
 
 This is the current design, and the place where its terms are defined. Why
 each part is shaped this way is in the ADRs
@@ -52,7 +52,7 @@ SGLang's code is in the [investigation](architecture-investigation.md).
 flowchart TB
     OPT["<b>Optimizer / agent</b><br/>chooses techniques + conceptual params"]
     TEC["<b>Technique</b><br/>what: concept + conceptual param schema"]
-    IMP["<b>Implementation</b><br/>capability · lifecycle · execution requirements<br/>owns · engaged()"]
+    IMP["<b>Implementation</b><br/>capability · lifecycle · execution requirements<br/>owns · after · engaged()"]
     RES["<b>Capability resolution</b><br/>which layer provides each capability, through which seam"]
     subgraph TGT["Target = one engine × one model"]
         EA["<b>EngineAdapter</b><br/>how this engine works, incl. its execution mode<br/>e.g. SGLangAdapter"]
@@ -61,6 +61,7 @@ flowchart TB
         EA ~~~ BD ~~~ MS
     end
     FEAS["<b>Execution feasibility</b><br/>execution requirements in the applied mode<br/>(one implementation; conflicts are the composer's)"]
+    COMP["<b>Composer</b><br/>several feasible implementations:<br/>exclusive claims · partial order"]
     RUN["<b>Install and run</b><br/>plugin hooks · launch args · request params"]
     ENG{"<b>Engagement verification</b><br/>runtime evidence"}
     MEAS["<b>Measurement</b><br/>speed · quality gate → measurement history"]
@@ -69,10 +70,11 @@ flowchart TB
     OPT --> TEC --> IMP -- "required capabilities" --> RES
     RES --- TGT
     RES -- resolved --> FEAS
-    FEAS -- feasible --> RUN --> ENG
+    FEAS -- feasible --> COMP -- composable --> RUN --> ENG
     ENG -- "VALID run" --> MEAS --> OPT
     RES -- unresolved --> BAD
     FEAS -- infeasible --> BAD
+    COMP -- conflict --> BAD
     RUN -- crashed --> BAD
     ENG -- "not engaged" --> BAD
     BAD -. "a fact, never a measurement" .-> OPT
@@ -220,8 +222,9 @@ Engaged     runtime evidence proves the implementation actually executed
 Core computes the first two before anything is launched, one implementation
 at a time ([ADR 0017](adr/0017-registries-and-capability-resolution.md),
 [ADR 0018](adr/0018-feasibility-in-core.md)). Feasibility involves no other
-implementation: lifecycle ordering and ownership conflicts between
-implementations are the composer's question. Engagement is only ever read
+implementation: ownership conflicts and ordering between implementations are
+the composer's question ([ADR 0020](adr/0020-composer.md)), and lifecycle
+constraints the execution plan's. Engagement is only ever read
 from a run.
 
 **Measurement history.** Everything learned by measuring: good thresholds,
@@ -429,7 +432,7 @@ supported or feasible, what conflicts, or in what order things run
 
 | Code | Owns |
 |---|---|
-| `optimizer/core/` | the capability vocabulary, metadata types, registries, resolution and the feasibility check; imports no engine and no catalog |
+| `optimizer/core/` | the capability and resource vocabularies, metadata types, registries, resolution, the feasibility check and the composer; imports no engine and no catalog |
 | `optimizer/techniques.py` | techniques and our engine-free implementations |
 | `optimizer/engines/<engine>/` | that engine's providers and native implementations, and its evaluator with its runtime policy as explicit data |
 | `optimizer/catalog.py` | gathering the atomic entries from their owners |
@@ -549,6 +552,10 @@ list of class paths and four short functions.
 - Does a real cache policy built on these capabilities pay off, and with what
   thresholds per model?
 - Does linear replacement need a Binding in practice?
+- **Prediction reuse with TeaCache at runtime.** The composer accepts the pair
+  because prediction reuse replaces the whole DiT call before the trunk is
+  entered; they have not been run together
+  ([ADR 0020](adr/0020-composer.md)).
 
 The experiments that test these are listed, cheapest-to-falsify first, in the
 [investigation](architecture-investigation.md#open-items).
