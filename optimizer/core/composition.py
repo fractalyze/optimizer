@@ -91,6 +91,8 @@ def compose(candidates: Sequence[Candidate]) -> CompositionResult:
         raise ValueError("an implementation appears more than once")
     if len({c.resolution.target for c in candidates}) > 1:
         raise ValueError("candidates were resolved for different targets")
+    if len({c.feasibility.context for c in candidates}) > 1:
+        raise ValueError("candidates were judged feasible in different runtime contexts")
     ids = tuple(sorted(by_id))
 
     owners: dict[str, list[str]] = {}

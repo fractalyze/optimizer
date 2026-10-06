@@ -36,7 +36,7 @@ class DependencyDirectionTest(absltest.TestCase):
     def test_core_imports_no_engine_package_catalog_or_engine_runtime(self):
         code = ("import sys, optimizer.core.capabilities, optimizer.core.resources, optimizer.core.specs, "
                 "optimizer.core.registry, optimizer.core.resolver, optimizer.core.feasibility, "
-                "optimizer.core.composition; "
+                "optimizer.core.composition, optimizer.core.plan; "
                 "print(sorted(m for m in sys.modules if m.startswith(('optimizer.engines', 'optimizer.catalog', "
                 "'optimizer.techniques', 'sglang', 'vllm', 'torch'))))")
         out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True).stdout

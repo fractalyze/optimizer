@@ -11,7 +11,7 @@ from optimizer.core.capabilities import (
     STEP_PREDICTION_OVERRIDE, STEP_SCHEDULE_MUTATE, TIMESTEP_STATE, TRUNK_OBSERVE, TRUNK_OUTPUT_OVERRIDE,
 )
 from optimizer.core.resources import LINEAR_LAYERS
-from optimizer.core.specs import ImplementationSpec, ProviderKind, ProviderSpec
+from optimizer.core.specs import ImplementationSpec, Lifecycle, ProviderKind, ProviderSpec
 from optimizer.techniques import FP8_W8A8_DYNAMIC_LINEAR
 
 ENGINE = "sglang"
@@ -36,5 +36,7 @@ IMPLEMENTATIONS = (
     # exp 005: `quantization="fp8"`, online W8A8 (ADR 0016); it decides what
     # every quantizable linear layer computes with.
     ImplementationSpec("sglang-native-fp8-w8a8", FP8_W8A8_DYNAMIC_LINEAR, frozenset({
-        ENGINE_FEATURE_FP8_W8A8_DYNAMIC_LINEAR}), owns=frozenset({LINEAR_LAYERS})),
+        ENGINE_FEATURE_FP8_W8A8_DYNAMIC_LINEAR}), owns=frozenset({LINEAR_LAYERS}),
+        # Weights quantized at load, fixed for the server's life (exp 005).
+        lifecycle=frozenset({Lifecycle.MUTATES_MODEL})),
 )
